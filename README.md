@@ -1,0 +1,6 @@
+# TODO
+
+[ ] spec / plan allow comment on markdown
+[ ] what happen if I chat on spec level after getting to task step? Will we clear all after spec and restart it?
+[ ] what is queue?
+[ ] workflow with trigger? look like n8n?
