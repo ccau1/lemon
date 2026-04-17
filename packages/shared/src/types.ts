@@ -26,9 +26,11 @@ export interface Ticket {
   projectId: string;
   title: string;
   description: string;
-  status: WorkflowStep | "awaiting_review" | "queued" | "error";
+  status: WorkflowStep | "awaiting_review" | "queued" | "running" | "error";
   errorStep?: string;
   errorMessage?: string;
+  archivedAt?: string;
+  autoApprove?: Partial<Record<WorkflowStep, boolean>>;
   createdAt: string;
   updatedAt: string;
 }
@@ -106,4 +108,5 @@ export interface Settings {
   parallelConcurrency: number;
   contextGlobs: string[] | Record<string, string[]>;
   theme: string;
+  stepModelOverrides: Record<string, Partial<Record<WorkflowStep, string>>>;
 }

@@ -1,6 +1,6 @@
 # SQLite vs Pure File Storage — Evaluation
 
-**Date:** 2026-04-15  
+**Date:** 2026-04-17 (updated after file-first refactor)  
 **Scope:** `packages/server` data persistence layer
 
 ## Current State
@@ -20,57 +20,63 @@ Everything outside of this DB is already plain files:
 - `workspaces.json` — workspace registry
 - `models.json` — model registry
 - `config.yaml` / `actions.yaml` — settings
-- `.lemon/tickets/<id>/{spec,plan,tasks,implement}.md` — artifact file-sync mirrors
+- `<dataDir>/workspaces/<workspaceId>/projects.json` — project registry per workspace
+- `<dataDir>/workspaces/<workspaceId>/config.yaml` — workspace settings including `stepModelOverrides`
+- `.lemon/tickets/<id>/{spec,plan,tasks,implement}.md` — artifact markdown files
+- `.lemon/tickets/<id>/tasks.json` — structured task list
+- `.lemon/tickets/<id>/thread.jsonl` — LLM conversation threads per ticket
+- `.lemon/tickets/<id>/.lmstate` — transient ticket state (`errorStep`, `errorMessage`)
+- `.lemon/tickets/<id>/.conf` — per-ticket configuration (`autoApprove` overrides)
+- `.lemon/tickets/.archived_<id>/` — archived ticket folders (filesystem-based archival)
 
-## What SQLite Stores
+## What SQLite Stores (after minimisation)
 
 | Table | Purpose |
 |-------|---------|
-| `projects` | Project metadata per workspace |
-| `tickets` | Ticket headers (title, status, project linkage) |
-| `specs` | Generated spec markdown per ticket |
-| `plans` | Generated plan markdown per ticket |
-| `tasks` | Task list (description + done flag) per ticket |
-| `implementations` | Generated implementation markdown per ticket |
-| `action_runs` | Log of custom action executions (response, model used) |
-| `step_model_overrides` | Per-project / per-step model overrides |
+| `tickets` | Ticket headers only (`title`, `description`, `status`, `projectId`, timestamps) |
+| `action_runs` | Log of custom action executions (`status`, `response`, `createdAt`) |
 
-Schema lives in `packages/server/src/db/schema.ts` and is bootstrapped inline in `packages/server/src/db/index.ts`.
+**What we removed from SQLite:**
+- `specs`, `plans`, `tasks`, `implementations` — ticket artifacts now live as files inside each ticket folder.
+- `ticket_threads` — thread history now lives as `thread.jsonl` per ticket.
+- `archived_at` column on `tickets` — archival is now represented by renaming the ticket folder to `.archived_<ticketId>`.
+- `auto_approve`, `error_step`, `error_message` columns on `tickets` — per-ticket config (`autoApprove`) lives in `.conf`, and transient error state lives in `.lmstate`.
+- `projects` — moved to `<dataDir>/workspaces/<workspaceId>/projects.json`.
+- `step_model_overrides` — moved into workspace `config.yaml` under the `stepModelOverrides` key.
 
-Access patterns are simple CRUD, cross-table reads per ticket, and workflow-engine writes that delete + insert into artifact tables.
+Schema lives in `packages/server/src/db/schema.ts` and is bootstrapped inline in `packages/server/src/db/index.ts`. A one-shot migration (`migrate-to-files.ts`) runs on startup to export legacy DB rows into files and drop the old tables.
 
-## Decision: Keep SQLite
+Access patterns are simple CRUD and workflow-engine writes that update ticket status only; all artifact I/O is file-based.
 
-A pure file-based approach is technically possible but not advisable for this project.
+## Decision: Keep SQLite for the remainder
 
-### Why SQLite Fits
+A pure file-based approach is technically possible for the remaining four tables but not advisable for this project.
+
+### Why SQLite Still Fits
 
 1. **Concurrency & ACID**  
-   The server exposes HTTP and WebSocket endpoints. The workflow queue (`p-queue`) and multiple clients can update the same workspace simultaneously. SQLite provides atomic writes; plain files would require custom locking to avoid corruption.
+   The server exposes HTTP and WebSocket endpoints. The workflow queue (`p-queue`) and multiple clients can update the same workspace simultaneously. SQLite provides atomic writes for `tickets` and `action_runs`; plain files would require custom locking to avoid corruption.
 
 2. **Querying**  
    The app frequently filters by `projectId`, `workspaceId`, and `ticketId`, and sorts `action_runs` by `created_at`. Re-implementing this in userland would add significant boilerplate.
 
-3. **Composite keys**  
-   `step_model_overrides` uses `(project_id, step)` as a composite primary key. This maps naturally to SQL but awkwardly to flat files.
+3. **Cross-workspace listing**  
+   Endpoints like `GET /tickets/all` and `GET /actions/runs` iterate every workspace and query its DB. Replacing this with recursive file scanning across many workspaces would be slower and more fragile.
 
-4. **Cross-workspace listing**  
-   Endpoints like `GET /tickets/all` iterate every workspace and query its DB. Replacing this with recursive file scanning across many workspaces would be slower and more fragile.
+4. **Zero operational cost**  
+   The database is already embedded and per-workspace. There is no external server to manage. Switching the remaining tables to files removes a small dependency footprint but adds large application complexity.
 
-5. **Zero operational cost**  
-   The database is already embedded and per-workspace. There is no external server to manage. Switching to files removes a small dependency footprint but adds large application complexity.
-
-## If We Ever Switch to Files
+## If We Ever Remove the Rest
 
 These changes would be required:
 
 1. **Replace DB layer** — Remove `drizzle-orm` + `better-sqlite3` from `packages/server/src/db/` and introduce a file-backed repository layer.
-2. **Rewrite repositories** — Convert all `db.select/insert/update/delete` calls in route handlers and `WorkflowEngine` to JSON/YAML file I/O.
+2. **Rewrite repositories** — Convert all `db.select/insert/update/delete` calls in route handlers, `WorkflowEngine`, `ActionRunQueue`, and `LlmService` to JSON/YAML file I/O.
 3. **Add locking** — Introduce file-level locking (e.g., `proper-lockfile` or advisory `fs` locks) because multiple requests can mutate the same workspace concurrently.
 4. **Re-implement queries** — Build filtering, sorting, and foreign-key-like lookups in application code.
-5. **Update cross-workspace endpoints** — Rewrite `/tickets/all` and similar to recursively scan and parse files across all workspace directories.
+5. **Update cross-workspace endpoints** — Rewrite `/tickets/all` and `/actions/runs` to recursively scan and parse files across all workspace directories.
 6. **Dependency cleanup** — Remove `better-sqlite3`, `drizzle-orm`, and `drizzle-kit` from `packages/server/package.json` and delete migration assets.
 
 ## Bottom Line
 
-SQLite is doing exactly what it should here. A move to pure file storage would be a regression in reliability and would effectively require writing a database in userland.
+SQLite is now used only for small, high-churn metadata (`tickets`, `projects`, `action_runs`, `step_model_overrides`) while all large, human-readable content (specs, plans, tasks, implementations, threads) lives in plain files alongside the workspace. This minimises DB duplication without sacrificing reliability for the parts that genuinely benefit from an embedded database.

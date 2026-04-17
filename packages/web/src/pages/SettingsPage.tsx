@@ -2,12 +2,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api.ts'
 import { useState, useEffect, useRef } from 'react'
 import { useParams, Link, Navigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import type { ModelConfig, ActionMessage } from '@lemon/shared'
 import { DropdownSelect } from '../components/Dropdown.tsx'
 import ModelsTab from '../components/ModelsTab.tsx'
+import IntegrationsTab from '../components/IntegrationsTab.tsx'
+import PillToggle from '../components/common/PillToggle.tsx'
 
 const steps = ['spec', 'plan', 'tasks', 'implement', 'done'] as const
-const tabs = ['General', 'Workflow', 'Prompts', 'Context', 'Actions', 'Models'] as const
+const tabs = ['General', 'Workflow', 'Actions', 'Models', 'Integrations'] as const
 
 function normalizeGlobs(raw: string[] | Record<string, string[]> | undefined): Record<string, string[]> {
   if (!raw) return { default: [] }
@@ -190,6 +193,7 @@ function ActionCard({
 }
 
 export default function SettingsPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { tab } = useParams<{ tab?: string }>()
   const activeTab = tabs.find((t) => t.toLowerCase() === tab?.toLowerCase()) || null
@@ -197,12 +201,14 @@ export default function SettingsPage() {
   const { data: config } = useQuery({ queryKey: ['config'], queryFn: () => api.getConfig() })
   const { data: models } = useQuery({ queryKey: ['models'], queryFn: api.getModels })
   const { data: themesData } = useQuery({ queryKey: ['themes'], queryFn: api.getThemes })
+  const { data: configDefaults } = useQuery({ queryKey: ['configDefaults'], queryFn: api.getConfigDefaults })
 
   const [autoApprove, setAutoApprove] = useState<Record<string, boolean>>({})
   const [concurrency, setConcurrency] = useState(3)
   const [globs, setGlobs] = useState<Record<string, string>>({})
   const [defaultModels, setDefaultModels] = useState<Record<string, string>>({})
   const [prompts, setPrompts] = useState<Record<string, string>>({})
+  const [activeWorkflowStep, setActiveWorkflowStep] = useState<string>(steps[0])
   const [actions, _setActions] = useState<Record<string, ActionMessage[]>>({})
   const actionsDirty = useRef(false)
   const actionsRef = useRef(actions)
@@ -218,7 +224,11 @@ export default function SettingsPage() {
       setAutoApprove(config.autoApprove || {})
       setConcurrency(config.parallelConcurrency || 3)
       setDefaultModels(config.defaultModels || {})
-      setPrompts((config.prompts as Record<string, string>) || {})
+      const initPrompts: Record<string, string> = {}
+      steps.filter((s) => s !== 'done').forEach((step) => {
+        initPrompts[step] = (config.prompts as Record<string, string>)?.[step] || configDefaults?.prompts?.[step] || ''
+      })
+      setPrompts(initPrompts)
       setActions(config.actions || {})
       actionsDirty.current = false
       const normalized = normalizeGlobs(config.contextGlobs)
@@ -228,7 +238,7 @@ export default function SettingsPage() {
       }
       setGlobs(entries)
     }
-  }, [config])
+  }, [config, configDefaults])
 
   // Debounced auto-save for actions
   useEffect(() => {
@@ -261,30 +271,10 @@ export default function SettingsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['config'] }),
   })
 
-  const saveGlobs = () => {
-    const record: Record<string, string[]> = {}
-    for (const key of ['default', ...steps]) {
-      const arr = globs[key]?.split('\n').map((s) => s.trim()).filter((s) => s.length > 0) || []
-      if (arr.length > 0) {
-        record[key] = arr
-      }
-    }
-    update.mutate({ key: 'contextGlobs', value: record })
-  }
-
   const handleDefaultModelChange = (step: string, modelId: string) => {
     const next = { ...defaultModels, [step]: modelId }
     setDefaultModels(next)
     setDefaultModel.mutate({ step, modelId })
-  }
-
-  const handleSetAllDefaultModels = (modelId: string) => {
-    const next: Record<string, string> = {}
-    for (const step of steps) {
-      next[step] = modelId
-      setDefaultModel.mutate({ step, modelId })
-    }
-    setDefaultModels({ ...defaultModels, ...next })
   }
 
   const handleRenameAction = (oldName: string, newName: string) => {
@@ -395,8 +385,101 @@ export default function SettingsPage() {
 
           {activeTab === 'Workflow' && (
             <div className="space-y-6">
+              <div className="text-sm font-semibold text-gray-900">Step Config</div>
+
               <div className="bg-white p-4 rounded shadow">
-                <h2 className="font-semibold mb-3">Default Models</h2>
+                <div className="flex items-center gap-2 border-b pb-3 mb-4 overflow-x-auto">
+                  {steps.map((step) => (
+                    <button
+                      key={step}
+                      type="button"
+                      onClick={() => setActiveWorkflowStep(step)}
+                      className={`px-3 py-1.5 rounded text-sm capitalize whitespace-nowrap transition-colors ${
+                        activeWorkflowStep === step
+                          ? 'bg-indigo-50 text-indigo-700 font-medium'
+                          : 'text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      {step}
+                    </button>
+                  ))}
+                </div>
+                {(() => {
+                  const step = activeWorkflowStep
+                  const val = autoApprove[step] || false
+                  return (
+                    <div className="space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                        <div className="flex-1 space-y-1">
+                          <label className="text-sm font-medium text-gray-700 h-6 flex items-center">Model</label>
+                          <p className="text-xs text-gray-500">{t('workflow.modelDescription')}</p>
+                          <DropdownSelect
+                            className="w-full"
+                            placeholder="— None —"
+                            options={(models || []).map((m: ModelConfig) => ({ value: m.id, label: m.name }))}
+                            value={defaultModels[step] || ''}
+                            onChange={(modelId) => handleDefaultModelChange(step, modelId)}
+                          />
+                        </div>
+                        <div
+                          className="space-y-1 sm:px-2 rounded sm:hover:bg-gray-50 cursor-pointer"
+                          onClick={() => {
+                            const checked = !val
+                            const next = { ...autoApprove, [step]: checked }
+                            setAutoApprove(next)
+                            update.mutate({ key: `autoApprove.${step}`, value: checked })
+                          }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm font-medium text-gray-700 select-none">Auto-approve</span>
+                            <span className="mb-[-0.3125rem]" onClick={(e) => e.stopPropagation()}>
+                              <PillToggle
+                                value={val}
+                                onChange={(checked) => {
+                                  const next = { ...autoApprove, [step]: checked }
+                                  setAutoApprove(next)
+                                  update.mutate({ key: `autoApprove.${step}`, value: checked })
+                                }}
+                              />
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500">{t('workflow.autoApproveDescription')}</p>
+                        </div>
+                      </div>
+
+                      {step !== 'done' && (
+                        <div className="space-y-1">
+                          <label className="text-sm font-medium text-gray-700">Prompt</label>
+                          <p className="text-xs text-gray-500">{t('workflow.promptDescription')}</p>
+                          <textarea
+                            className="border px-3 py-2 rounded w-full h-32 font-mono text-sm bg-white text-gray-900"
+                            value={prompts[step] || ''}
+                            onChange={(e) => setPrompts({ ...prompts, [step]: e.target.value })}
+                          />
+                        </div>
+                      )}
+
+                      <div className="space-y-1">
+                        <label className="text-sm font-medium text-gray-700">Context globs</label>
+                        <p className="text-xs text-gray-500">{t('workflow.contextGlobsDescription')}</p>
+                        <textarea
+                          className="border px-3 py-2 rounded w-full h-24 font-mono text-sm bg-white text-gray-900"
+                          value={globs[step] || ''}
+                          onChange={(e) => setGlobs({ ...globs, [step]: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  )
+                })()}
+              </div>
+
+              <hr className="border-gray-200" />
+
+              <div className="text-sm font-semibold text-gray-900">Global Workflow Settings</div>
+
+              <div className="bg-white p-4 rounded shadow">
+                <h2 className="font-semibold mb-1">Default Models</h2>
+                <p className="text-xs text-gray-500 mb-3">{t('workflow.defaultModelsDescription')}</p>
                 <div className="flex items-center gap-2 mb-4">
                   <DropdownSelect
                     className="w-auto"
@@ -404,49 +487,32 @@ export default function SettingsPage() {
                     options={(models || []).map((m: ModelConfig) => ({ value: m.id, label: m.name }))}
                     value=""
                     onChange={(modelId) => {
-                      if (modelId) handleSetAllDefaultModels(modelId)
+                      if (modelId) {
+                        const next: Record<string, string> = {}
+                        for (const step of steps) {
+                          next[step] = modelId
+                          setDefaultModel.mutate({ step, modelId })
+                        }
+                        setDefaultModels({ ...defaultModels, ...next })
+                      }
                     }}
                   />
                 </div>
-                <div className="space-y-3">
-                  {steps.map((step) => (
-                    <div key={step} className="flex items-center gap-3">
-                      <span className="w-24 capitalize">{step}</span>
-                      <DropdownSelect
-                        className="flex-1"
-                        placeholder="— None —"
-                        options={(models || []).map((m: ModelConfig) => ({ value: m.id, label: m.name }))}
-                        value={defaultModels[step] || ''}
-                        onChange={(modelId) => handleDefaultModelChange(step, modelId)}
-                      />
-                    </div>
-                  ))}
-                </div>
               </div>
 
               <div className="bg-white p-4 rounded shadow">
-                <h2 className="font-semibold mb-3">Auto-Approve</h2>
-                <div className="space-y-2">
-                  {steps.map((step) => (
-                    <label key={step} className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        className="w-5 h-5"
-                        checked={autoApprove[step] || false}
-                        onChange={(e) => {
-                          const next = { ...autoApprove, [step]: e.target.checked }
-                          setAutoApprove(next)
-                          update.mutate({ key: `autoApprove.${step}`, value: e.target.checked })
-                        }}
-                      />
-                      <span className="capitalize">{step}</span>
-                    </label>
-                  ))}
-                </div>
+                <h2 className="font-semibold mb-1">Default Context Globs</h2>
+                <p className="text-xs text-gray-500 mb-3">{t('workflow.defaultContextGlobsDescription')}</p>
+                <textarea
+                  className="border px-3 py-2 rounded w-full h-24 font-mono text-sm bg-white text-gray-900"
+                  value={globs.default || ''}
+                  onChange={(e) => setGlobs({ ...globs, default: e.target.value })}
+                />
               </div>
 
               <div className="bg-white p-4 rounded shadow">
-                <h2 className="font-semibold mb-3">Parallel Concurrency</h2>
+                <h2 className="font-semibold mb-1">Parallel Concurrency</h2>
+                <p className="text-xs text-gray-500 mb-3">{t('workflow.parallelConcurrencyDescription')}</p>
                 <input
                   type="number"
                   className="border px-3 py-2 rounded w-32 bg-white text-gray-900"
@@ -458,71 +524,35 @@ export default function SettingsPage() {
                   }}
                 />
               </div>
-            </div>
-          )}
 
-          {activeTab === 'Prompts' && (
-            <div className="bg-white p-4 rounded shadow">
-              <h2 className="font-semibold mb-3">Step Prompts</h2>
-              <p className="text-sm text-gray-500 mb-4">
-                Override system prompts used for each workflow step. Leave blank to use built-in defaults.
-              </p>
-              <div className="space-y-4">
-                {steps.filter((s) => s !== 'done').map((step) => (
-                  <div key={step}>
-                    <label className="text-sm font-medium text-gray-700 capitalize">{step}</label>
-                    <textarea
-                      className="border px-3 py-2 rounded w-full h-32 font-mono text-sm mt-1 bg-white text-gray-900"
-                      value={prompts[step] || ''}
-                      placeholder="(use default)"
-                      onChange={(e) => setPrompts({ ...prompts, [step]: e.target.value })}
-                    />
-                  </div>
-                ))}
-              </div>
               <button
-                className="mt-4 bg-indigo-600 text-white px-4 py-2 rounded"
-                onClick={() => update.mutate({ key: 'prompts', value: prompts })}
+                className="bg-indigo-600 text-white px-4 py-2 rounded"
+                onClick={() => {
+                  const toSave: Record<string, string> = {}
+                  steps.filter((s) => s !== 'done').forEach((step) => {
+                    const val = prompts[step]?.trim()
+                    const def = configDefaults?.prompts?.[step] || ''
+                    if (val && val !== def) {
+                      toSave[step] = val
+                    }
+                  })
+                  update.mutate({ key: 'prompts', value: toSave })
+                  const record: Record<string, string[]> = {}
+                  for (const key of ['default', ...steps]) {
+                    const arr = globs[key]?.split('\n').map((s) => s.trim()).filter((s) => s.length > 0) || []
+                    if (arr.length > 0) {
+                      record[key] = arr
+                    }
+                  }
+                  update.mutate({ key: 'contextGlobs', value: record })
+                }}
               >
-                Save Prompts
+                Save Workflow
               </button>
             </div>
           )}
 
-          {activeTab === 'Context' && (
-            <div className="bg-white p-4 rounded shadow">
-              <h2 className="font-semibold mb-3">Context Globs</h2>
-              <p className="text-sm text-gray-500 mb-4">
-                Files to scan for workspace context when generating each step. One glob per line.
-              </p>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Default</label>
-                  <textarea
-                    className="border px-3 py-2 rounded w-full h-24 font-mono text-sm mt-1 bg-white text-gray-900"
-                    value={globs.default || ''}
-                    onChange={(e) => setGlobs({ ...globs, default: e.target.value })}
-                  />
-                </div>
-                {steps.map((step) => (
-                  <div key={step}>
-                    <label className="text-sm font-medium text-gray-700 capitalize">{step}</label>
-                    <textarea
-                      className="border px-3 py-2 rounded w-full h-24 font-mono text-sm mt-1 bg-white text-gray-900"
-                      value={globs[step] || ''}
-                      onChange={(e) => setGlobs({ ...globs, [step]: e.target.value })}
-                    />
-                  </div>
-                ))}
-              </div>
-              <button
-                className="mt-4 bg-indigo-600 text-white px-4 py-2 rounded"
-                onClick={saveGlobs}
-              >
-                Save Context Globs
-              </button>
-            </div>
-          )}
+
 
           {activeTab === 'Actions' && (
             <div className="space-y-6">
@@ -561,6 +591,8 @@ export default function SettingsPage() {
           )}
 
           {activeTab === 'Models' && <ModelsTab />}
+
+          {activeTab === 'Integrations' && <IntegrationsTab />}
         </div>
       </div>
     </div>

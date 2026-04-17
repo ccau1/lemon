@@ -16,7 +16,7 @@ export default function SectionChatModal({ target, history, onClose, onSend, isL
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50">
-      <div className="bg-white rounded-lg w-full max-w-xl h-[60vh] flex flex-col p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-xl h-[60vh] flex flex-col p-4">
         <div className="flex justify-between items-center mb-2">
           <div>
             <h3 className="font-semibold">{target.title}</h3>

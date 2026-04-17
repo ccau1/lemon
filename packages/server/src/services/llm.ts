@@ -3,9 +3,6 @@ import OpenAI from "openai";
 import type { ModelConfig, WorkflowStep } from "@lemon/shared";
 import { ModelRegistry } from "../config/model-registry.js";
 import { ConfigManager } from "../config/settings.js";
-import type { DB } from "../db/index.js";
-import { stepModelOverrides } from "../db/schema.js";
-import { eq, and } from "drizzle-orm";
 
 export class LlmService {
   private clients = new Map<string, OpenAI>();
@@ -18,18 +15,12 @@ export class LlmService {
   async resolveModel(
     workspaceId: string,
     projectId: string,
-    step: WorkflowStep,
-    db: DB
+    step: WorkflowStep
   ): Promise<ModelConfig | undefined> {
-    // 1. Check per-project/step override
-    const override = await db.query.stepModelOverrides.findFirst({
-      where: and(
-        eq(stepModelOverrides.projectId, projectId),
-        eq(stepModelOverrides.step, step)
-      ),
-    });
-    if (override) {
-      return this.modelRegistry.get(override.modelId);
+    // 1. Check per-project/step override in workspace config
+    const overrides = this.configManager.resolve(workspaceId).stepModelOverrides[projectId];
+    if (overrides?.[step]) {
+      return this.modelRegistry.get(overrides[step]);
     }
 
     // 2. Check workspace/default config for step
@@ -64,10 +55,10 @@ export class LlmService {
 
   private getCliCommand(config: ModelConfig): [string, string[]] {
     if (config.provider === "claude-code-cli") {
-      return [config.modelId, ["-p"]];
+      return [config.modelId, ["-p", "--dangerously-skip-permissions"]];
     }
     if (config.provider === "kimi-code-cli") {
-      return [config.modelId, ["-p"]];
+      return [config.modelId, ["--print", "-p"]];
     }
     throw new Error(`Unknown CLI provider: ${config.provider}`);
   }
@@ -85,15 +76,21 @@ export class LlmService {
 
   private async chatCli(
     config: ModelConfig,
-    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    workspacePath?: string
   ): Promise<string> {
     const prompt = this.formatCliPrompt(messages);
     const [cmd, baseArgs] = this.getCliCommand(config);
     const args = [...baseArgs, prompt];
+    const TIMEOUT_MS = 300_000; // 5 minutes
     return new Promise((resolve, reject) => {
-      const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], cwd: workspacePath });
       let stdout = "";
       let stderr = "";
+      const timeout = setTimeout(() => {
+        child.kill("SIGTERM");
+        reject(new Error(`${config.provider} timed out after ${TIMEOUT_MS / 1000}s`));
+      }, TIMEOUT_MS);
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
       child.stdout.on("data", (data) => {
@@ -103,6 +100,7 @@ export class LlmService {
         stderr += data;
       });
       child.on("error", (err: any) => {
+        clearTimeout(timeout);
         if (err.code === "ENOENT" && err.syscall === "spawn") {
           reject(new Error(`Command '${cmd}' not found. Please install it or check your PATH.`));
         } else {
@@ -110,6 +108,7 @@ export class LlmService {
         }
       });
       child.on("close", (code) => {
+        clearTimeout(timeout);
         if (code !== 0) {
           reject(new Error(`${config.provider} exited with code ${code}: ${stderr || stdout}`));
         } else {
@@ -122,12 +121,13 @@ export class LlmService {
 
   private async chatStreamCli(
     config: ModelConfig,
-    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    workspacePath?: string
   ): Promise<AsyncIterable<string>> {
     const prompt = this.formatCliPrompt(messages);
     const [cmd, baseArgs] = this.getCliCommand(config);
     const args = [...baseArgs, prompt];
-    const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], cwd: workspacePath });
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (data) => {
@@ -155,10 +155,11 @@ export class LlmService {
 
   async chat(
     config: ModelConfig,
-    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    workspacePath?: string
   ): Promise<string> {
     if (this.isCliProvider(config)) {
-      return this.chatCli(config, messages);
+      return this.chatCli(config, messages, workspacePath);
     }
 
     const client = this.getClient(config);
@@ -169,16 +170,17 @@ export class LlmService {
     if (config.temperature !== undefined) {
       body.temperature = config.temperature;
     }
-    const response = await client.chat.completions.create(body);
+    const response = await client.chat.completions.create(body, { timeout: 300_000 });
     return response.choices[0]?.message?.content ?? "";
   }
 
   async chatStream(
     config: ModelConfig,
-    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    workspacePath?: string
   ): Promise<AsyncIterable<string>> {
     if (this.isCliProvider(config)) {
-      return this.chatStreamCli(config, messages);
+      return this.chatStreamCli(config, messages, workspacePath);
     }
 
     const client = this.getClient(config);

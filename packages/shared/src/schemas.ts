@@ -21,6 +21,7 @@ export const ticketStatusSchema = z.enum([
   "done",
   "awaiting_review",
   "queued",
+  "running",
   "error",
 ]);
 
@@ -46,6 +47,8 @@ export const ticketSchema = z.object({
   title: z.string(),
   description: z.string(),
   status: ticketStatusSchema,
+  archivedAt: z.string().optional(),
+  autoApprove: z.record(workflowStepSchema, z.boolean()).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -109,4 +112,5 @@ export const settingsSchema = z.object({
     default: ["README.md", "docs/**/*.md", "package.json", "Cargo.toml", "pyproject.toml", "*.config.*"],
   }),
   theme: z.string().default("dark"),
+  stepModelOverrides: z.record(z.string(), z.record(workflowStepSchema, z.string())).default({}),
 });

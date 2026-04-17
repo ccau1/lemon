@@ -1,17 +1,21 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import fs from "fs";
+import path from "path";
 import type { WorkspaceRegistry } from "../config/workspace-registry.js";
-import { projects } from "../db/schema.js";
-import type { DB } from "../db/index.js";
 
 const createSchema = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
 });
 
+function projectsPath(dataDir: string, workspaceId: string): string {
+  return path.join(dataDir, "workspaces", workspaceId, "projects.json");
+}
+
 export async function workspaceRoutes(
   fastify: FastifyInstance,
-  { registry, getDb }: { registry: WorkspaceRegistry; getDb: (workspaceId: string) => DB }
+  { registry, dataDir }: { registry: WorkspaceRegistry; dataDir: string }
 ) {
   fastify.get("/workspaces", async () => {
     return registry.list();
@@ -28,15 +32,21 @@ export async function workspaceRoutes(
     const body = createSchema.parse(request.body);
     try {
       const ws = registry.create(body.name, body.path);
-      const db = getDb(ws.id);
       const now = new Date().toISOString();
-      await db.insert(projects).values({
-        id: crypto.randomUUID(),
-        workspaceId: ws.id,
-        name: "default",
-        createdAt: now,
-        updatedAt: now,
-      });
+      const p = projectsPath(dataDir, ws.id);
+      const dir = path.dirname(p);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(
+        p,
+        JSON.stringify(
+          [{ id: crypto.randomUUID(), workspaceId: ws.id, name: "default", createdAt: now, updatedAt: now }],
+          null,
+          2
+        ),
+        "utf-8"
+      );
       return ws;
     } catch (e: any) {
       return reply.status(409).send({ error: e.message });

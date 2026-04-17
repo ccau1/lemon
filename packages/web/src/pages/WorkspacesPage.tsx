@@ -64,7 +64,7 @@ export default function WorkspacesPage() {
             if (e.target === e.currentTarget) setOpen(false)
           }}
         >
-          <div className="bg-white rounded-lg w-full max-w-lg p-6">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">Create Workspace</h2>
               <button

@@ -8,11 +8,14 @@ import os from "os";
 import { WorkspaceRegistry } from "./config/workspace-registry.js";
 import { ConfigManager } from "./config/settings.js";
 import { ModelRegistry } from "./config/model-registry.js";
+import { IntegrationRegistry } from "./config/integration-registry.js";
 import { getWorkspaceDb } from "./db/index.js";
 import { LlmService } from "./services/llm.js";
 import { WorkflowEngine } from "./services/workflow.js";
 import { ActionRunQueue } from "./services/action-run-queue.js";
+import { EventDispatcher } from "./services/event-dispatcher.js";
 import type { WorkflowStep } from "@lemon/shared";
+import { migrateArtifactsToFiles } from "./db/migrate-to-files.js";
 
 import { workspaceRoutes } from "./routes/workspaces.js";
 import { projectRoutes } from "./routes/projects.js";
@@ -24,6 +27,7 @@ import { testRoutes } from "./routes/test.js";
 import { actionRoutes } from "./routes/actions.js";
 import { themeRoutes } from "./routes/themes.js";
 import { docsRoutes } from "./routes/docs.js";
+import { integrationRoutes } from "./routes/integrations.js";
 
 export interface ServerOptions {
   port: number;
@@ -45,6 +49,7 @@ export async function startServer(options: ServerOptions) {
     (id) => workspaceRegistry.get(id)?.path
   );
   const modelRegistry = new ModelRegistry(options.dataDir);
+  const integrationRegistry = new IntegrationRegistry(options.dataDir);
 
   // Seed default model on first bootstrap
   const existingModels = modelRegistry.list();
@@ -65,6 +70,9 @@ export async function startServer(options: ServerOptions) {
 
   const llmService = new LlmService(modelRegistry, configManager);
 
+  // One-time migration: move artifact data from old DB tables to ticket folders
+  await migrateArtifactsToFiles(options.dataDir, workspaceRegistry, configManager);
+
   const getDb = (workspaceId: string) =>
     getWorkspaceDb(options.dataDir, workspaceId);
 
@@ -81,21 +89,23 @@ export async function startServer(options: ServerOptions) {
     }
   };
 
-  const workflowEngine = new WorkflowEngine(getDb, llmService, configManager, broadcast, workspaceRegistry);
-  const actionRunQueue = new ActionRunQueue(getDb, llmService, configManager, modelRegistry);
+  const eventDispatcher = new EventDispatcher(integrationRegistry);
+  const workflowEngine = new WorkflowEngine(getDb, llmService, configManager, broadcast, workspaceRegistry, eventDispatcher);
+  const actionRunQueue = new ActionRunQueue(getDb, llmService, configManager, modelRegistry, workspaceRegistry);
   await actionRunQueue.recover(workspaceRegistry);
 
   // Register routes
-  await workspaceRoutes(app, { registry: workspaceRegistry, getDb });
-  await projectRoutes(app, { getDb, registry: workspaceRegistry });
-  await ticketRoutes(app, { getDb, registry: workspaceRegistry, engine: workflowEngine });
+  await workspaceRoutes(app, { registry: workspaceRegistry, dataDir: options.dataDir });
+  await projectRoutes(app, { dataDir: options.dataDir, registry: workspaceRegistry });
+  await ticketRoutes(app, { getDb, registry: workspaceRegistry, engine: workflowEngine, dispatcher: eventDispatcher });
   await modelRoutes(app, { registry: modelRegistry });
   await configRoutes(app, { manager: configManager });
-  await workflowRoutes(app, { getDb, llm: llmService, engine: workflowEngine, configManager, broadcast, workspaceRegistry });
+  await workflowRoutes(app, { getDb, llm: llmService, engine: workflowEngine, configManager, broadcast, workspaceRegistry, dispatcher: eventDispatcher });
   await testRoutes(app);
   await actionRoutes(app, { getDb, configManager, llm: llmService, modelRegistry, workspaceRegistry, actionRunQueue });
   await themeRoutes(app, { dataDir: options.dataDir });
   await docsRoutes(app);
+  await integrationRoutes(app, { registry: integrationRegistry });
 
   // WebSocket gateway for real-time updates
   app.get("/ws", { websocket: true }, (connection: any) => {

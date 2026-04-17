@@ -17,5 +17,14 @@
     "plan": "plan",
     "tasks": "tasks",
     "implement": "implement"
+  },
+  "workflow": {
+    "modelDescription": "The model to use for this step.",
+    "autoApproveDescription": "Skip manual approval for this step.",
+    "promptDescription": "Override the system prompt used for this step.",
+    "contextGlobsDescription": "Files to include as context. One glob per line.",
+    "defaultModelsDescription": "Quickly set the default model for all steps.",
+    "defaultContextGlobsDescription": "Fallback files to scan when no step-specific globs are set. One glob per line.",
+    "parallelConcurrencyDescription": "Maximum number of parallel tasks to run."
   }
 }

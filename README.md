@@ -6,3 +6,4 @@
 [ ] workflow with trigger? look like n8n?
 [ ] targeted changes on spec/plan/tasks
 [ ] sanity check - still work with all ai providers?
+[ ] add jira + shortcut integration, add buttons `From Jira`, `From Shortcut` that let us paste their url or their story id.

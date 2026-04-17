@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { ConfigManager } from "../config/settings.js";
 import type { WorkflowStep } from "@lemon/shared";
+import { defaultPrompts } from "../services/workflow.js";
 
 const setSchema = z.object({
   key: z.string().min(1),
@@ -25,6 +26,10 @@ export async function configRoutes(
     const { workspaceId } = request.query as { workspaceId?: string };
     if (!workspaceId) return {};
     return manager.readWorkspace(workspaceId);
+  });
+
+  fastify.get("/config/defaults", async () => {
+    return { prompts: defaultPrompts };
   });
 
   fastify.post("/config", async (request, reply) => {

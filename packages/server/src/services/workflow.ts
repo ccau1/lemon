@@ -1,14 +1,30 @@
 import PQueue from "p-queue";
-import { eq, asc, desc } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { DB } from "../db/index.js";
-import { tickets, specs, plans, tasks, implementations } from "../db/schema.js";
+import { tickets } from "../db/schema.js";
 import type { LlmService } from "./llm.js";
 import type { ConfigManager } from "../config/settings.js";
 import type { WorkspaceRegistry } from "../config/workspace-registry.js";
-import type { WorkflowStep } from "@lemon/shared";
+import type { WorkflowStep, IntegrationEventName } from "@lemon/shared";
 import { scanWorkspaceContext } from "./context-scanner.js";
-import { syncTicketArtifact } from "./file-sync.js";
+import {
+  readSpec,
+  writeSpec,
+  readPlan,
+  writePlan,
+  readTasks,
+  writeTasks,
+  readImplement,
+  isTicketArchived,
+  deriveCurrentStep as deriveCurrentStepFromFiles,
+  clearDownstreamArtifacts,
+  readTicketState,
+  writeTicketState,
+  readTicketConf,
+  type TaskItem,
+} from "./file-sync.js";
 import { getThreadMessages, appendThreadMessages, type ThreadMessage } from "./thread.js";
+import type { EventDispatcher } from "./event-dispatcher.js";
 
 const stepOrder: WorkflowStep[] = ["spec", "plan", "tasks", "implement", "done"];
 
@@ -49,6 +65,39 @@ export function stripPreamble(content: string): string {
   return content.trim();
 }
 
+export const defaultPrompts: Record<WorkflowStep, string> = {
+  spec: "You are an expert product manager. Write a clear, concise product spec in markdown. Use the following sections with ATX headings: # Title, ## Overview, ## In Scope, ## Out of Scope, ## Technical Requirements, ## File Structure, ## Acceptance Criteria. Use bullet lists under each section. Wrap file trees in triple backticks. Use the provided workspace context (README, docs, config files) to keep the spec realistic for the existing codebase. Do not include preamble like 'Here is the final spec:'; output only the markdown. If anything is unclear and you need to ask a clarifying question before writing the spec, respond with ONLY the text \"QUESTION: <your question here>\". Otherwise, write the complete spec.",
+  plan: "You are a senior software architect. Given a spec, write a high-level implementation plan in markdown. Use the following sections with ATX headings: # Title, ## Overview, ## Key Files / Changes, ## Step-by-step Implementation, ## Testing Strategy, ## Risks and Considerations. Use bullet lists and numbered lists where appropriate. Wrap file trees or code snippets in triple backticks. Do not include preamble like 'Here is the plan:'; output only the markdown. If anything is unclear and you need to ask a clarifying question before writing the plan, respond with ONLY the text \"QUESTION: <your question here>\". Otherwise, write the complete plan.",
+  tasks: 'You are a project manager. Given a plan, break it into a list of implementation tasks. Return ONLY a JSON array like [{"description":"...","done":false}, ...].',
+  implement: "You are a senior engineer. Given the tasks, describe the implementation approach, key code changes, and file names in markdown. Do not include preamble like 'Here is the implementation:'; output only the markdown.",
+  done: "",
+};
+
+export function parseQuestion(content: string): string | undefined {
+  const match = content.trim().match(/^QUESTION:\s*([\s\S]+)$/i);
+  return match ? match[1].trim() : undefined;
+}
+
+export function isValidContent(step: WorkflowStep, content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  // Detect CLI garbage / tool rejection traces
+  if (trimmed.startsWith("Thought for") || trimmed.includes("Rejected by user")) return false;
+  if (step === "spec" || step === "plan" || step === "implement") {
+    // Must contain at least one markdown heading
+    return /^#{1,6}\s/m.test(trimmed);
+  }
+  if (step === "tasks") {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
 export class WorkflowEngine {
   private queues = new Map<string, PQueue>();
   private running = new Map<string, Set<string>>();
@@ -58,7 +107,8 @@ export class WorkflowEngine {
     private llm: LlmService,
     private config: ConfigManager,
     private broadcast: BroadcastFn,
-    private workspaces: WorkspaceRegistry
+    private workspaces: WorkspaceRegistry,
+    private dispatcher?: EventDispatcher
   ) {}
 
   private getQueue(workspaceId: string): PQueue {
@@ -86,6 +136,7 @@ export class WorkflowEngine {
       .set({ status: "queued", updatedAt: new Date().toISOString() })
       .where(eq(tickets.id, ticketId));
     this.broadcast("ticket:queued", { workspaceId, ticketId });
+    await this.dispatchStepEvent("ticketQueued", workspaceId, ticketId, "spec");
     // Immediately start processing; PQueue handles concurrency
     this.runTicket(workspaceId, ticketId).catch(() => {});
   }
@@ -100,11 +151,19 @@ export class WorkflowEngine {
     });
     if (!ticket) throw new Error("Ticket not found");
 
+    const ws = this.workspaces.get(workspaceId);
+    if (ws && isTicketArchived(ws.path, ticketId)) return;
+
     running.add(ticketId);
     const queue = this.getQueue(workspaceId);
     return queue
       .add(async () => {
+        await db
+          .update(tickets)
+          .set({ status: "running", updatedAt: new Date().toISOString() })
+          .where(eq(tickets.id, ticketId));
         this.broadcast("ticket:running", { workspaceId, ticketId });
+        await this.dispatchStepEvent("ticketRunning", workspaceId, ticketId, (ticket.status as WorkflowStep) || "spec");
         await this.processStep(workspaceId, ticket as any);
       })
       .finally(() => {
@@ -116,18 +175,22 @@ export class WorkflowEngine {
     const targetWorkspaces = allWorkspaces
       ? (() => {
           // We'd need a workspace registry injected here; for now just run current
-          // This will be improved when we inject workspace registry
           return [workspaceId];
         })()
       : [workspaceId];
 
     for (const wsId of targetWorkspaces) {
       const db = this.getDb(wsId);
-      const queued = await db.select().from(tickets).where(eq(tickets.status, "queued"));
+      const ws = this.workspaces.get(wsId);
+      const allRows = await db.select().from(tickets).where(eq(tickets.status, "queued"));
+      const queued = ws
+        ? allRows.filter((t) => !isTicketArchived(ws.path, t.id))
+        : allRows;
       this.broadcast("ticket:batch_started", {
         workspaceId: wsId,
         count: queued.length,
       });
+      await this.dispatchStepEvent("ticketBatchStarted", wsId, "", "spec", { count: queued.length });
       await Promise.allSettled(queued.map((t) => this.runTicket(wsId, t.id)));
     }
   }
@@ -137,32 +200,69 @@ export class WorkflowEngine {
     ticket: { id: string; projectId: string; title: string; description: string; status: string }
   ) {
     const db = this.getDb(workspaceId);
-    const step = ticket.status as WorkflowStep | "queued" | "awaiting_review" | "error";
+    const freshTicket = await db.query.tickets.findFirst({
+      where: eq(tickets.id, ticket.id),
+    });
+    if (!freshTicket) return;
+    const step = freshTicket.status as WorkflowStep | "queued" | "running" | "awaiting_review" | "error";
 
     if (step === "done") return;
 
-    // Normalize step if queued, awaiting_review, or error back to actual workflow step
+    // Normalize step if queued, running, awaiting_review, or error back to actual workflow step
     let currentStep: WorkflowStep = step as WorkflowStep;
-    if (step === "queued" || step === "awaiting_review" || step === "error") {
-      if (step === "error" && (ticket as any).errorStep) {
-        currentStep = (ticket as any).errorStep as WorkflowStep;
+    const ws = this.workspaces.get(workspaceId);
+    if (step === "queued" || step === "running" || step === "awaiting_review" || step === "error") {
+      if (step === "error") {
+        const state = ws ? readTicketState(ws.path, ticket.id) : {};
+        if (state.errorStep) {
+          currentStep = state.errorStep as WorkflowStep;
+        } else {
+          currentStep = ws ? deriveCurrentStepFromFiles(ws.path, ticket.id) : "spec";
+        }
       } else {
-        currentStep = await this.deriveCurrentStep(workspaceId, ticket.id);
+        currentStep = ws ? deriveCurrentStepFromFiles(ws.path, ticket.id) : "spec";
       }
     }
 
     try {
-      await db
-        .update(tickets)
-        .set({ errorStep: null, errorMessage: null })
-        .where(eq(tickets.id, ticket.id));
+      if (ws) {
+        writeTicketState(ws.path, ticket.id, { errorStep: null, errorMessage: null });
+      }
 
       const settings = this.config.resolve(workspaceId);
-      const autoApprove = settings.autoApprove[currentStep] ?? false;
+      let autoApprove = settings.autoApprove[currentStep] ?? false;
+      const ticketConf = ws ? readTicketConf(ws.path, ticket.id) : {};
+      if (ticketConf.autoApprove && currentStep in ticketConf.autoApprove) {
+        autoApprove = ticketConf.autoApprove[currentStep]!;
+      }
 
-      const shouldSkipGeneration = await this.hasNonOutdatedArtifact(workspaceId, ticket.id, currentStep);
+      const shouldSkipGeneration = this.hasArtifact(workspaceId, ticket.id, currentStep);
+      let generated = true;
       if (!shouldSkipGeneration) {
-        await this.generateAndSave(workspaceId, ticket, currentStep);
+        generated = await this.generateAndSave(workspaceId, ticket, currentStep);
+      }
+
+      if (generated) {
+        await this.dispatchStepEvent(`postRun${this.capitalize(currentStep)}` as IntegrationEventName, workspaceId, ticket.id, currentStep);
+      }
+
+      if (!generated) {
+        // AI asked a clarifying question; pause for human input
+        const ticketAfter = await db.query.tickets.findFirst({
+          where: eq(tickets.id, ticket.id),
+        });
+        if (ticketAfter && ticketAfter.status !== "awaiting_review") {
+          await db
+            .update(tickets)
+            .set({ status: "awaiting_review", updatedAt: new Date().toISOString() })
+            .where(eq(tickets.id, ticket.id));
+        }
+        this.broadcast("ticket:awaiting_review", {
+          workspaceId,
+          ticketId: ticket.id,
+          step: currentStep,
+        });
+        return;
       }
 
       // If the step handler (e.g. processTasks) already advanced the ticket to done, stop here
@@ -183,8 +283,11 @@ export class WorkflowEngine {
           ticketId: ticket.id,
           step: currentStep,
         });
+        await this.dispatchStepEvent("ticketAwaitingReview", workspaceId, ticket.id, currentStep);
         return;
       }
+
+      await this.dispatchStepEvent(`preApprove${this.capitalize(currentStep)}` as IntegrationEventName, workspaceId, ticket.id, currentStep);
 
       const newStep = nextStep(currentStep);
       await db
@@ -197,6 +300,9 @@ export class WorkflowEngine {
         ticketId: ticket.id,
         newStep,
       });
+
+      await this.dispatchStepEvent(`postApprove${this.capitalize(currentStep)}` as IntegrationEventName, workspaceId, ticket.id, currentStep, { newStep });
+      await this.dispatchStepEvent("ticketAdvanced", workspaceId, ticket.id, currentStep, { newStep });
 
       // Always run the next step immediately; processStep will check auto-approve after generating
       if (newStep !== "done") {
@@ -212,11 +318,15 @@ export class WorkflowEngine {
         .update(tickets)
         .set({
           status: "error",
-          errorStep: currentStep,
-          errorMessage: e.message || String(e),
           updatedAt: new Date().toISOString(),
         })
         .where(eq(tickets.id, ticket.id));
+      if (ws) {
+        writeTicketState(ws.path, ticket.id, {
+          errorStep: currentStep,
+          errorMessage: e.message || String(e),
+        });
+      }
       this.broadcast("ticket:error", {
         workspaceId,
         ticketId: ticket.id,
@@ -227,50 +337,22 @@ export class WorkflowEngine {
     }
   }
 
-  private async deriveCurrentStep(
-    workspaceId: string,
-    ticketId: string
-  ): Promise<WorkflowStep> {
-    const db = this.getDb(workspaceId);
-    const [specRows, planRows, taskRows, implRows] = await Promise.all([
-      db.select().from(specs).where(eq(specs.ticketId, ticketId)),
-      db.select().from(plans).where(eq(plans.ticketId, ticketId)),
-      db.select().from(tasks).where(eq(tasks.ticketId, ticketId)),
-      db.select().from(implementations).where(eq(implementations.ticketId, ticketId)),
-    ]);
-    const hasImpl = implRows.some((r) => !r.outdated);
-    const hasTasks = taskRows.some((r) => !r.outdated);
-    const hasPlan = planRows.some((r) => !r.outdated);
-    const hasSpec = specRows.length > 0;
-    if (hasImpl) return "implement";
-    if (hasTasks) return "tasks";
-    if (hasPlan) return "plan";
-    if (hasSpec) return "spec";
-    return "spec";
-  }
-
-  private async hasNonOutdatedArtifact(
+  private hasArtifact(
     workspaceId: string,
     ticketId: string,
     step: WorkflowStep
-  ): Promise<boolean> {
-    const db = this.getDb(workspaceId);
+  ): boolean {
+    const ws = this.workspaces.get(workspaceId);
+    if (!ws) return false;
     switch (step) {
-      case "spec": {
-        const rows = await db.select().from(specs).where(eq(specs.ticketId, ticketId));
-        return rows.length > 0;
-      }
-      case "plan": {
-        const rows = await db.select().from(plans).where(eq(plans.ticketId, ticketId));
-        return rows.length > 0 && rows.some((r) => !r.outdated);
-      }
-      case "tasks": {
-        const rows = await db.select().from(tasks).where(eq(tasks.ticketId, ticketId));
-        return rows.length > 0 && rows.every((r) => !r.outdated);
-      }
-      case "implement": {
+      case "spec":
+        return readSpec(ws.path, ticketId) !== null;
+      case "plan":
+        return readPlan(ws.path, ticketId) !== null;
+      case "tasks":
+        return readTasks(ws.path, ticketId) !== null;
+      case "implement":
         return false;
-      }
       default:
         return false;
     }
@@ -280,61 +362,49 @@ export class WorkflowEngine {
     workspaceId: string,
     ticket: { id: string; projectId: string; title: string; description: string },
     step: WorkflowStep
-  ) {
+  ): Promise<boolean> {
     const db = this.getDb(workspaceId);
-    const model = await this.llm.resolveModel(
-      workspaceId,
-      ticket.projectId,
-      step,
-      db
-    );
+    const ws = this.workspaces.get(workspaceId);
+    if (!ws) throw new Error("Workspace not found");
+
+    const model = await this.llm.resolveModel(workspaceId, ticket.projectId, step);
     if (!model) throw new Error(`No model configured for step ${step}`);
 
     const context = await this.buildContext(workspaceId, ticket.id, step);
     const messages = this.buildPrompt(workspaceId, step, ticket.title, ticket.description, context);
-    const threadMessages = await getThreadMessages(db, ticket.id, model.id);
+    const threadMessages = await getThreadMessages(ws.path, ticket.id, model.id);
     const allMessages: ThreadMessage[] = [...threadMessages, ...messages];
-    let content = await this.llm.chat(model, allMessages);
+    let content = await this.llm.chat(model, allMessages, ws.path);
     content = this.stripPreamble(content);
-    await appendThreadMessages(db, ticket.id, model.id, step, [
-      ...messages,
-      { role: "assistant", content },
+
+    const question = parseQuestion(content);
+    if (question) {
+      await appendThreadMessages(ws.path, ticket.id, [
+        ...messages.map((m) => ({ ...m, modelId: model.id, step })),
+        { role: "assistant", content: `QUESTION: ${question}`, modelId: model.id, step },
+      ]);
+      return false;
+    }
+
+    if (!isValidContent(step, content)) {
+      throw new Error("AI returned invalid or incomplete output. Please try again or regenerate this step.");
+    }
+
+    await appendThreadMessages(ws.path, ticket.id, [
+      ...messages.map((m) => ({ ...m, modelId: model.id, step })),
+      { role: "assistant", content, modelId: model.id, step },
     ]);
 
-    const now = new Date().toISOString();
-
     // Clear downstream artifacts when regenerating an upstream step
-    if (step === "spec" || step === "plan" || step === "tasks") {
-      await db.delete(implementations).where(eq(implementations.ticketId, ticket.id));
-    }
-    if (step === "spec" || step === "plan") {
-      await db.delete(tasks).where(eq(tasks.ticketId, ticket.id));
-    }
-    if (step === "spec") {
-      await db.delete(plans).where(eq(plans.ticketId, ticket.id));
-    }
+    clearDownstreamArtifacts(ws.path, ticket.id, step);
 
     switch (step) {
       case "spec": {
-        await db.delete(specs).where(eq(specs.ticketId, ticket.id));
-        await db.insert(specs).values({
-          id: crypto.randomUUID(),
-          ticketId: ticket.id,
-          content,
-          createdAt: now,
-          updatedAt: now,
-        });
+        writeSpec(ws.path, ticket.id, content);
         break;
       }
       case "plan": {
-        await db.delete(plans).where(eq(plans.ticketId, ticket.id));
-        await db.insert(plans).values({
-          id: crypto.randomUUID(),
-          ticketId: ticket.id,
-          content,
-          createdAt: now,
-          updatedAt: now,
-        });
+        writePlan(ws.path, ticket.id, content);
         break;
       }
       case "tasks": {
@@ -342,19 +412,16 @@ export class WorkflowEngine {
         if (taskList.length === 0) {
           throw new Error("LLM returned empty or unparseable task list");
         }
-        await db.delete(tasks).where(eq(tasks.ticketId, ticket.id));
-        for (const t of taskList) {
-          await db.insert(tasks).values({
+        writeTasks(
+          ws.path,
+          ticket.id,
+          taskList.map((t) => ({
             id: crypto.randomUUID(),
-            ticketId: ticket.id,
             description: t.description,
             done: t.done,
-            comment: null,
             status: "queued",
-            createdAt: now,
-            updatedAt: now,
-          });
-        }
+          }))
+        );
         break;
       }
       case "implement": {
@@ -363,14 +430,7 @@ export class WorkflowEngine {
       }
     }
 
-    const workspace = this.workspaces.get(workspaceId);
-    if (workspace && step !== "done") {
-      if (step === "tasks") {
-        syncTicketArtifact(workspace.path, ticket.id, step, this.parseTasks(content));
-      } else {
-        syncTicketArtifact(workspace.path, ticket.id, step, content);
-      }
-    }
+    return true;
   }
 
   private async buildContext(
@@ -378,43 +438,36 @@ export class WorkflowEngine {
     ticketId: string,
     step: WorkflowStep
   ): Promise<string> {
-    const db = this.getDb(workspaceId);
     let context = "";
+    const ws = this.workspaces.get(workspaceId);
 
     if (step === "spec" || step === "plan" || step === "tasks" || step === "implement") {
-      const workspace = this.workspaces.get(workspaceId);
-      if (workspace) {
+      if (ws) {
         const globs = this.config.resolveContextGlobs(workspaceId, step);
         const workspaceContext = await scanWorkspaceContext({
-          workspacePath: workspace.path,
+          workspacePath: ws.path,
           globs,
         });
         context += workspaceContext;
       }
     }
 
-    const specRows = await db.select().from(specs).where(eq(specs.ticketId, ticketId)).orderBy(desc(specs.createdAt));
-    if (specRows[0]) context += `\n\nSpec:\n${specRows[0].content}`;
+    const spec = ws ? readSpec(ws.path, ticketId) : null;
+    if (spec) context += `\n\nSpec:\n${spec}`;
+
     if (step === "plan" || step === "tasks" || step === "implement") {
-      const planRows = await db.select().from(plans).where(eq(plans.ticketId, ticketId)).orderBy(desc(plans.createdAt));
-      if (planRows[0]) context += `\n\nPlan:\n${planRows[0].content}`;
+      const plan = ws ? readPlan(ws.path, ticketId) : null;
+      if (plan) context += `\n\nPlan:\n${plan}`;
     }
+
     if (step === "tasks" || step === "implement") {
-      const taskRows = await db.select().from(tasks).where(eq(tasks.ticketId, ticketId));
-      if (taskRows.length) {
-        context += `\n\nTasks:\n${taskRows.map((t) => `- ${t.description}`).join("\n")}`;
+      const taskList = ws ? readTasks(ws.path, ticketId) : null;
+      if (taskList?.length) {
+        context += `\n\nTasks:\n${taskList.map((t) => `- ${t.description}`).join("\n")}`;
       }
     }
     return context;
   }
-
-  private defaultPrompts: Record<WorkflowStep, string> = {
-    spec: "You are an expert product manager. Write a clear, concise product spec in markdown. Use the following sections with ATX headings: # Title, ## Overview, ## In Scope, ## Out of Scope, ## Technical Requirements, ## File Structure, ## Acceptance Criteria. Use bullet lists under each section. Wrap file trees in triple backticks. Use the provided workspace context (README, docs, config files) to keep the spec realistic for the existing codebase. Do not include preamble like 'Here is the final spec:'; output only the markdown.",
-    plan: "You are a senior software architect. Given a spec, write a high-level implementation plan in markdown. Use the following sections with ATX headings: # Title, ## Overview, ## Key Files / Changes, ## Step-by-step Implementation, ## Testing Strategy, ## Risks and Considerations. Use bullet lists and numbered lists where appropriate. Wrap file trees or code snippets in triple backticks. Do not include preamble like 'Here is the plan:'; output only the markdown.",
-    tasks: 'You are a project manager. Given a plan, break it into a list of implementation tasks. Return ONLY a JSON array like [{"description":"...","done":false}, ...].',
-    implement: "You are a senior engineer. Given the tasks, describe the implementation approach, key code changes, and file names in markdown. Do not include preamble like 'Here is the implementation:'; output only the markdown.",
-    done: "",
-  };
 
   private buildPrompt(
     workspaceId: string,
@@ -427,7 +480,7 @@ export class WorkflowEngine {
       ? `Ticket: ${title}\nDescription: ${description}`
       : `Ticket: ${title}`;
     const configured = this.config.resolve(workspaceId).prompts[step];
-    const systemContent = (configured && configured.trim()) || this.defaultPrompts[step];
+    const systemContent = (configured && configured.trim()) || defaultPrompts[step];
     return [
       { role: "system", content: systemContent },
       { role: "user", content: `${ticketLine}${context}\n\nWrite the ${step}.` },
@@ -439,14 +492,13 @@ export class WorkflowEngine {
     ticket: { id: string; projectId: string; title: string; description: string }
   ) {
     const db = this.getDb(workspaceId);
-    const taskRows = await db
-      .select()
-      .from(tasks)
-      .where(eq(tasks.ticketId, ticket.id))
-      .orderBy(asc(tasks.createdAt));
+    const ws = this.workspaces.get(workspaceId);
+    if (!ws) throw new Error("Workspace not found");
 
-    const nextTask = taskRows.find((t) => t.status === "queued");
-    if (!nextTask) {
+    let taskItems = readTasks(ws.path, ticket.id) ?? [];
+    const nextTaskIndex = taskItems.findIndex((t) => t.status === "queued");
+    if (nextTaskIndex === -1) {
+      await this.dispatchStepEvent("preRunDone", workspaceId, ticket.id, "done");
       await db
         .update(tickets)
         .set({ status: "done", updatedAt: new Date().toISOString() })
@@ -456,13 +508,15 @@ export class WorkflowEngine {
         ticketId: ticket.id,
         newStep: "done",
       });
+      await this.dispatchStepEvent("postRunDone", workspaceId, ticket.id, "done", { newStep: "done" });
+      await this.dispatchStepEvent("ticketAdvanced", workspaceId, ticket.id, "done", { newStep: "done" });
       return;
     }
 
-    await db
-      .update(tasks)
-      .set({ status: "processing", updatedAt: new Date().toISOString() })
-      .where(eq(tasks.id, nextTask.id));
+    const nextTask = taskItems[nextTaskIndex];
+    taskItems[nextTaskIndex] = { ...nextTask, status: "processing" };
+    writeTasks(ws.path, ticket.id, taskItems);
+
     this.broadcast("task:updated", {
       workspaceId,
       ticketId: ticket.id,
@@ -471,39 +525,34 @@ export class WorkflowEngine {
     });
 
     try {
-      const model = await this.llm.resolveModel(
-        workspaceId,
-        ticket.projectId,
-        "implement",
-        db
-      );
+      await this.dispatchStepEvent("taskPreRun", workspaceId, ticket.id, "implement", { taskId: nextTask.id });
+
+      const model = await this.llm.resolveModel(workspaceId, ticket.projectId, "implement");
       if (!model) throw new Error("No model configured for implement step");
 
       const context = await this.buildContext(workspaceId, ticket.id, "implement");
-      const messages = this.buildTaskPrompt(
-        ticket.title,
-        ticket.description,
-        nextTask.description,
-        context
-      );
-      const threadMessages = await getThreadMessages(db, ticket.id, model.id);
+      const messages = this.buildTaskPrompt(ticket.title, ticket.description, nextTask.description, context);
+      const threadMessages = await getThreadMessages(ws.path, ticket.id, model.id);
       const allMessages: ThreadMessage[] = [...threadMessages, ...messages];
-      let content = await this.llm.chat(model, allMessages);
+      let content = await this.llm.chat(model, allMessages, ws.path);
       content = this.stripPreamble(content);
-      await appendThreadMessages(db, ticket.id, model.id, "implement", [
-        ...messages,
-        { role: "assistant", content },
+      await appendThreadMessages(ws.path, ticket.id, [
+        ...messages.map((m) => ({ ...m, modelId: model.id, step: "implement" as WorkflowStep })),
+        { role: "assistant", content, modelId: model.id, step: "implement" },
       ]);
 
-      await db
-        .update(tasks)
-        .set({
+      // Re-read tasks to avoid clobbering concurrent updates
+      taskItems = readTasks(ws.path, ticket.id) ?? [];
+      const idx = taskItems.findIndex((t) => t.id === nextTask.id);
+      if (idx !== -1) {
+        taskItems[idx] = {
+          ...taskItems[idx],
           status: "done",
           done: true,
           result: content,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(tasks.id, nextTask.id));
+        };
+        writeTasks(ws.path, ticket.id, taskItems);
+      }
 
       this.broadcast("task:updated", {
         workspaceId,
@@ -513,26 +562,35 @@ export class WorkflowEngine {
         result: content,
       });
 
+      await this.dispatchStepEvent("taskPostRun", workspaceId, ticket.id, "implement", { taskId: nextTask.id, result: content });
+
       await this.processTasks(workspaceId, ticket);
     } catch (e: any) {
-      await db
-        .update(tasks)
-        .set({
+      // Re-read tasks before updating
+      taskItems = readTasks(ws.path, ticket.id) ?? [];
+      const idx = taskItems.findIndex((t) => t.id === nextTask.id);
+      if (idx !== -1) {
+        taskItems[idx] = {
+          ...taskItems[idx],
           status: "error",
           errorMessage: e.message || String(e),
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(tasks.id, nextTask.id));
+        };
+        writeTasks(ws.path, ticket.id, taskItems);
+      }
 
       await db
         .update(tickets)
         .set({
           status: "error",
-          errorStep: "implement",
-          errorMessage: e.message || String(e),
           updatedAt: new Date().toISOString(),
         })
         .where(eq(tickets.id, ticket.id));
+      if (ws) {
+        writeTicketState(ws.path, ticket.id, {
+          errorStep: "implement",
+          errorMessage: e.message || String(e),
+        });
+      }
 
       this.broadcast("task:updated", {
         workspaceId,
@@ -547,6 +605,8 @@ export class WorkflowEngine {
         step: "implement",
         error: e.message || String(e),
       });
+      await this.dispatchStepEvent("taskError", workspaceId, ticket.id, "implement", { taskId: nextTask.id, error: e.message || String(e) });
+      await this.dispatchStepEvent("ticketError", workspaceId, ticket.id, "implement", { error: e.message || String(e) });
       throw e;
     }
   }
@@ -575,6 +635,21 @@ export class WorkflowEngine {
 
   private stripPreamble(content: string): string {
     return stripPreamble(content);
+  }
+
+  private capitalize(str: string): string {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+
+  private async dispatchStepEvent(
+    event: IntegrationEventName,
+    workspaceId: string,
+    ticketId: string,
+    step: WorkflowStep,
+    extra?: Record<string, unknown>
+  ): Promise<void> {
+    if (!this.dispatcher) return;
+    await this.dispatcher.dispatch(event, { workspaceId, ticketId, step, ...extra });
   }
 
   private parseTasks(content: string): Array<{ description: string; done: boolean }> {

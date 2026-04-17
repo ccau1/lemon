@@ -86,6 +86,7 @@ export class ConfigManager {
         workspace.parallelConcurrency ?? global.parallelConcurrency,
       contextGlobs: this.mergeContextGlobs(global.contextGlobs, workspace.contextGlobs),
       theme: workspace.theme ?? global.theme,
+      stepModelOverrides: this.mergeStepModelOverrides(global.stepModelOverrides, workspace.stepModelOverrides),
     };
   }
 
@@ -125,6 +126,21 @@ export class ConfigManager {
       if (partial.theme !== undefined) {
         result.theme = partial.theme;
       }
+      if (partial.stepModelOverrides !== undefined) {
+        result.stepModelOverrides = this.mergeStepModelOverrides(result.stepModelOverrides ?? {}, partial.stepModelOverrides);
+      }
+    }
+    return result;
+  }
+
+  private mergeStepModelOverrides(
+    global: Settings["stepModelOverrides"],
+    workspace: Settings["stepModelOverrides"] | undefined
+  ): Settings["stepModelOverrides"] {
+    if (!workspace) return global;
+    const result: Settings["stepModelOverrides"] = { ...global };
+    for (const [projectId, overrides] of Object.entries(workspace)) {
+      result[projectId] = { ...result[projectId], ...overrides };
     }
     return result;
   }
@@ -161,6 +177,7 @@ export class ConfigManager {
         done: false,
       },
       defaultModels: {},
+      stepModelOverrides: {},
       prompts: {
         spec: "You are an expert product manager. Write a clear, concise product spec in markdown. Use the following sections with ATX headings: # Title, ## Overview, ## In Scope, ## Out of Scope, ## Technical Requirements, ## File Structure, ## Acceptance Criteria. Use bullet lists under each section. Wrap file trees in triple backticks. Use the provided workspace context (README, docs, config files) to keep the spec realistic for the existing codebase. Do not include preamble like 'Here is the final spec:'; output only the markdown.",
         plan: "You are a senior software architect. Given a spec, write a high-level implementation plan in markdown. Use the following sections with ATX headings: # Title, ## Overview, ## Key Files / Changes, ## Step-by-step Implementation, ## Testing Strategy, ## Risks and Considerations. Use bullet lists and numbered lists where appropriate. Wrap file trees or code snippets in triple backticks. Do not include preamble like 'Here is the plan:'; output only the markdown.",

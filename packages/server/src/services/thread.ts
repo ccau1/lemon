@@ -1,48 +1,22 @@
-import { eq, asc } from "drizzle-orm";
-import type { DB } from "../db/index.js";
-import { ticketThreads } from "../db/schema.js";
 import type { WorkflowStep } from "@lemon/shared";
+import { readThread, appendThreadMessages as appendToFile, type ThreadMessage as FileThreadMessage } from "./file-sync.js";
 
-export type ThreadMessage = {
-  role: "system" | "user" | "assistant";
-  content: string;
-};
+export type ThreadMessage = FileThreadMessage;
 
 export async function getThreadMessages(
-  db: DB,
+  workspacePath: string,
   ticketId: string,
-  modelId: string
+  modelId?: string
 ): Promise<ThreadMessage[]> {
-  const rows = await db
-    .select()
-    .from(ticketThreads)
-    .where(eq(ticketThreads.ticketId, ticketId))
-    .orderBy(asc(ticketThreads.createdAt));
-  return rows
-    .filter((r) => r.modelId === modelId)
-    .map((r) => ({
-      role: r.role as ThreadMessage["role"],
-      content: r.content,
-    }));
+  const messages = readThread(workspacePath, ticketId);
+  if (!modelId) return messages;
+  return messages.filter((m) => m.modelId === modelId);
 }
 
 export async function appendThreadMessages(
-  db: DB,
+  workspacePath: string,
   ticketId: string,
-  modelId: string,
-  step: WorkflowStep,
   messages: ThreadMessage[]
 ): Promise<void> {
-  const now = new Date().toISOString();
-  for (const m of messages) {
-    await db.insert(ticketThreads).values({
-      id: crypto.randomUUID(),
-      ticketId,
-      modelId,
-      step,
-      role: m.role,
-      content: m.content,
-      createdAt: now,
-    });
-  }
+  appendToFile(workspacePath, ticketId, messages);
 }

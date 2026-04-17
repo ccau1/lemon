@@ -14,7 +14,8 @@ export class ActionRunQueue {
     private getDb: (workspaceId: string) => DB,
     private llm: LlmService,
     private configManager: ConfigManager,
-    private modelRegistry: ModelRegistry
+    private modelRegistry: ModelRegistry,
+    private workspaces: WorkspaceRegistry
   ) {}
 
   private getQueue(workspaceId: string): PQueue {
@@ -58,7 +59,8 @@ export class ActionRunQueue {
       }
 
       try {
-        const content = await this.llm.chat(model, messages as any);
+        const workspace = this.workspaces.get(workspaceId);
+        const content = await this.llm.chat(model, messages as any, workspace?.path);
         await db
           .update(actionRuns)
           .set({ status: "done", response: content })

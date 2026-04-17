@@ -2,8 +2,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../api.ts'
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { DropdownSelect, DropdownFilter } from '../components/Dropdown.tsx'
+import PillToggle from '../components/common/PillToggle.tsx'
 import { formatStatus } from '../utils.ts'
+import IntegrationImportButtons from '../components/IntegrationImportButtons.tsx'
 
 const LS_KEY = 'ticket_form'
 
@@ -55,7 +58,10 @@ const sortOptions = [
   { value: 'status_desc', label: 'Status Z-A' },
 ] as const
 
+const configTabs = ['Workflow'] as const
+
 export default function WorkspacePage() {
+  const { t } = useTranslation()
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const queryClient = useQueryClient()
   const { data: workspaces } = useQuery({
@@ -85,6 +91,10 @@ export default function WorkspacePage() {
     queryKey: ['models'],
     queryFn: api.getModels,
   })
+  const { data: configDefaults } = useQuery({
+    queryKey: ['configDefaults'],
+    queryFn: api.getConfigDefaults,
+  })
 
   const workspace = useMemo(() => {
     return (workspaces || []).find((w: any) => w.id === workspaceId)
@@ -113,11 +123,13 @@ export default function WorkspacePage() {
   const [showProjectTicketForm, setShowProjectTicketForm] = useState(initialProject.open)
 
   const [showConfigModal, setShowConfigModal] = useState(false)
+  const [activeConfigTab, setActiveConfigTab] = useState<typeof configTabs[number]>('Workflow')
   const [localAutoApprove, setLocalAutoApprove] = useState<Record<string, boolean>>({})
   const [localConcurrency, setLocalConcurrency] = useState<string>('')
   const [localStepGlobs, setLocalStepGlobs] = useState<Record<string, string>>({})
   const [localDefaultModels, setLocalDefaultModels] = useState<Record<string, string>>({})
   const [localPrompts, setLocalPrompts] = useState<Record<string, string>>({})
+  const [activeWorkflowStep, setActiveWorkflowStep] = useState<string>(steps[0])
 
   const projectHydrated = useRef(false)
   const skipNextProjectPersist = useRef(false)
@@ -163,11 +175,25 @@ export default function WorkspacePage() {
   }, [workspaceId, ticketTitle, showTicketForm, ticketProjectId])
 
   useEffect(() => {
+    if (showConfigModal) {
+      setActiveConfigTab('Workflow')
+    }
+  }, [showConfigModal])
+
+  useEffect(() => {
     if (!rawConfig) return
     setLocalAutoApprove(rawConfig.autoApprove || {})
     setLocalConcurrency(rawConfig.parallelConcurrency !== undefined ? String(rawConfig.parallelConcurrency) : '')
     setLocalDefaultModels(rawConfig.defaultModels || {})
-    setLocalPrompts((rawConfig.prompts as Record<string, string>) || {})
+
+    const initPrompts: Record<string, string> = {}
+    steps.filter((s) => s !== 'done').forEach((step) => {
+      const workspaceVal = (rawConfig.prompts as Record<string, string>)?.[step]
+      const globalVal = (globalConfig?.prompts as Record<string, string>)?.[step]
+      const defaultVal = configDefaults?.prompts?.[step] || ''
+      initPrompts[step] = workspaceVal ?? globalVal ?? defaultVal
+    })
+    setLocalPrompts(initPrompts)
 
     const next: Record<string, string> = {}
     const rawGlobs = rawConfig.contextGlobs
@@ -211,21 +237,25 @@ export default function WorkspacePage() {
     return (g as Record<string, string[]>)?.[key]?.join('\n') || ''
   }
 
-  const getGlobalPromptPlaceholder = (step: string) => {
-    if (!globalConfig) return ''
-    return (globalConfig.prompts as Record<string, string>)?.[step] || ''
-  }
-
   const saveConfig = useMutation({
     mutationFn: async () => {
       if (!workspaceId) return
       const promises: Promise<any>[] = []
+      const nextAutoApprove: Record<string, boolean> = {}
       steps.forEach((step) => {
         const val = localAutoApprove[step]
-        if (val !== undefined && val !== rawConfig?.autoApprove?.[step]) {
-          promises.push(api.setConfig({ key: `autoApprove.${step}`, value: val, workspaceId }))
+        if (val !== undefined) {
+          nextAutoApprove[step] = val
         }
       })
+      const hasAutoApproveChanges = steps.some((step) => {
+        const rawVal = rawConfig?.autoApprove?.[step]
+        const newVal = nextAutoApprove[step]
+        return rawVal !== newVal && (rawVal !== undefined || newVal !== undefined)
+      })
+      if (hasAutoApproveChanges || Object.keys(nextAutoApprove).length !== Object.keys(rawConfig?.autoApprove || {}).length) {
+        promises.push(api.setConfig({ key: 'autoApprove', value: nextAutoApprove, workspaceId }))
+      }
 
       if (localConcurrency.trim()) {
         const num = Number(localConcurrency.trim())
@@ -260,7 +290,10 @@ export default function WorkspacePage() {
       const nextPrompts: Record<string, string> = {}
       steps.filter((s) => s !== 'done').forEach((step) => {
         const val = localPrompts[step]?.trim()
-        if (val) nextPrompts[step] = val
+        const globalVal = (globalConfig?.prompts as Record<string, string>)?.[step]?.trim() || configDefaults?.prompts?.[step] || ''
+        if (val && val !== globalVal) {
+          nextPrompts[step] = val
+        }
       })
       const hasPromptChanges = steps.filter((s) => s !== 'done').some((step) => {
         const rawVal = rawConfig?.prompts?.[step]
@@ -434,6 +467,14 @@ export default function WorkspacePage() {
                   value={ticketDescription}
                   onChange={(e) => setTicketDescription(e.target.value)}
                 />
+                <div className="flex justify-start">
+                  <IntegrationImportButtons
+                    onImport={({ title: t, description: d }) => {
+                      setTicketTitle(t)
+                      setTicketDescription(d)
+                    }}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -597,6 +638,14 @@ export default function WorkspacePage() {
                       value={projectTicketDescription}
                       onChange={(e) => setProjectTicketDescription(e.target.value)}
                     />
+                    <div className="flex justify-start">
+                      <IntegrationImportButtons
+                        onImport={({ title: t, description: d }) => {
+                          setProjectTicketTitle(t)
+                          setProjectTicketDescription(d)
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               )}
@@ -659,132 +708,192 @@ export default function WorkspacePage() {
             if (e.target === e.currentTarget) setShowConfigModal(false)
           }}
         >
-          <div className="bg-white rounded-lg w-full max-w-2xl max-h-[80vh] overflow-y-auto p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Edit Config — {workspace.name}</h2>
-              <button className="text-gray-500 hover:text-gray-800" onClick={() => setShowConfigModal(false)}>
-                Close
-              </button>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[80vh] flex flex-col">
+            <div className="p-6 border-b">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold">Edit Config — {workspace.name}</h2>
+                <button className="text-gray-500 hover:text-gray-800" onClick={() => setShowConfigModal(false)}>
+                  Close
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">Leave fields empty to inherit global values.</p>
             </div>
-            <p className="text-xs text-gray-500 mb-4">Leave fields empty to inherit global values.</p>
 
-            <div className="space-y-5">
-              <div>
-                <h3 className="text-sm font-semibold mb-2">Default Models</h3>
-                <div className="flex items-center gap-2 mb-3">
-                  <DropdownSelect
-                    className="w-auto"
-                    placeholder="Set all steps to..."
-                    options={(models || []).map((m: any) => ({ value: m.id, label: m.name }))}
-                    value=""
-                    onChange={(modelId) => {
-                      if (modelId) {
-                        const next: Record<string, string> = {}
-                        for (const s of steps) next[s] = modelId
-                        setLocalDefaultModels((prev) => ({ ...prev, ...next }))
-                      }
-                    }}
-                  />
-                </div>
-                <div className="space-y-2">
-                  {steps.map((step) => {
-                    const hasLocal = !!localDefaultModels[step]
-                    const globalModelId = globalConfig.defaultModels?.[step]
-                    const globalName = globalModelId ? (models || []).find((m: any) => m.id === globalModelId)?.name || globalModelId : undefined
-                    return (
-                      <div key={step} className="flex items-center gap-3">
-                        <span className="w-20 capitalize text-sm">{step}</span>
-                        <DropdownSelect
-                          className="flex-1"
-                          placeholder="— Inherit global —"
-                          options={(models || []).map((m: any) => ({ value: m.id, label: m.name }))}
-                          value={localDefaultModels[step] || ''}
-                          onChange={(modelId) => setLocalDefaultModels((prev) => ({ ...prev, [step]: modelId }))}
-                        />
-                        {!hasLocal && globalName && (
-                          <span className="text-xs text-gray-400">(global: {globalName})</span>
-                        )}
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="flex flex-col md:flex-row gap-6">
+                <aside className="md:w-48 shrink-0 md:sticky md:top-6 md:self-start">
+                  <div className="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible">
+                    {configTabs.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setActiveConfigTab(t)}
+                        className={`text-left px-4 py-2 rounded text-sm whitespace-nowrap transition-colors ${
+                          activeConfigTab === t
+                            ? 'bg-indigo-50 text-indigo-700 font-medium'
+                            : 'text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </aside>
+
+                <div className="flex-1 pr-2 pb-2">
+                  {activeConfigTab === 'Workflow' && (
+                    <div className="space-y-6">
+                      <div className="text-sm font-semibold text-gray-900">Step Config</div>
+
+                      <div className="border rounded p-4 space-y-4">
+                        <div className="flex items-center gap-2 border-b pb-3 overflow-x-auto">
+                          {steps.map((step) => (
+                            <button
+                              key={step}
+                              type="button"
+                              onClick={() => setActiveWorkflowStep(step)}
+                              className={`px-3 py-1.5 rounded text-sm capitalize whitespace-nowrap transition-colors ${
+                                activeWorkflowStep === step
+                                  ? 'bg-indigo-50 text-indigo-700 font-medium'
+                                  : 'text-gray-700 hover:bg-gray-50'
+                              }`}
+                            >
+                              {step}
+                            </button>
+                          ))}
+                        </div>
+                        {(() => {
+                          const step = activeWorkflowStep
+                          const hasLocal = !!localDefaultModels[step]
+                          const globalModelId = globalConfig.defaultModels?.[step]
+                          const globalName = globalModelId ? (models || []).find((m: any) => m.id === globalModelId)?.name || globalModelId : undefined
+                          const hasOverride = step in (rawConfig.autoApprove || {})
+                          const val = localAutoApprove[step] ?? globalConfig.autoApprove?.[step] ?? false
+                          return (
+                            <div className="space-y-4">
+                              <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                                <div className="flex-1 space-y-1">
+                                  <label className="text-sm font-medium text-gray-700 h-6 flex items-center">Model</label>
+                                  <p className="text-xs text-gray-500">{t('workflow.modelDescription')}</p>
+                                  <div className="flex items-center gap-3">
+                                    <DropdownSelect
+                                      className="flex-1"
+                                      placeholder="— Inherit global —"
+                                      options={(models || []).map((m: any) => ({ value: m.id, label: m.name }))}
+                                      value={localDefaultModels[step] || ''}
+                                      onChange={(modelId) => setLocalDefaultModels((prev) => ({ ...prev, [step]: modelId }))}
+                                    />
+                                    {!hasLocal && globalName && (
+                                      <span className="text-xs text-gray-400">(global: {globalName})</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div
+                                  className="space-y-1 sm:px-2 rounded sm:hover:bg-gray-50 cursor-pointer"
+                                  onClick={() => {
+                                    setLocalAutoApprove((prev) => ({ ...prev, [step]: !val }))
+                                  }}
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-sm font-medium text-gray-700 select-none">Auto-approve</span>
+                                    {!hasOverride && (
+                                      <span className="text-xs text-gray-400">(global: {globalConfig.autoApprove?.[step] ? 'on' : 'off'})</span>
+                                    )}
+                                    <span className="mb-[-0.3125rem]" onClick={(e) => e.stopPropagation()}>
+                                      <PillToggle
+                                        value={val}
+                                        onChange={(checked) => {
+                                          setLocalAutoApprove((prev) => ({ ...prev, [step]: checked }))
+                                        }}
+                                      />
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-gray-500">{t('workflow.autoApproveDescription')}</p>
+                                </div>
+                              </div>
+
+                              {step !== 'done' && (
+                                <div className="space-y-1">
+                                  <label className="block text-xs font-medium text-gray-600 mb-0">Prompt</label>
+                                  <p className="text-xs text-gray-500">{t('workflow.promptDescription')}</p>
+                                  <textarea
+                                    className="border border-gray-300 px-3 py-2 rounded w-full h-24 font-mono text-sm bg-white text-gray-900"
+                                    value={localPrompts[step] || ''}
+                                    onChange={(e) => setLocalPrompts((prev) => ({ ...prev, [step]: e.target.value }))}
+                                  />
+                                </div>
+                              )}
+
+                              <div className="space-y-1">
+                                <label className="block text-xs font-medium text-gray-600 mb-0">Context globs</label>
+                                <p className="text-xs text-gray-500">{t('workflow.contextGlobsDescription')}</p>
+                                <textarea
+                                  className="border border-gray-300 px-3 py-2 rounded w-full h-20 font-mono text-sm bg-white text-gray-900"
+                                  value={localStepGlobs[step] || ''}
+                                  placeholder={getGlobalGlobsPlaceholder(step)}
+                                  onChange={(e) => setLocalStepGlobs((prev) => ({ ...prev, [step]: e.target.value }))}
+                                />
+                              </div>
+                            </div>
+                          )
+                        })()}
                       </div>
-                    )
-                  })}
-                </div>
-              </div>
 
-              <div>
-                <h3 className="text-sm font-semibold mb-2">Auto-Approve</h3>
-                <div className="space-y-2">
-                  {steps.map((step) => {
-                    const overridden = rawConfig.autoApprove && step in rawConfig.autoApprove
-                    const val = overridden ? localAutoApprove[step] : globalConfig.autoApprove?.[step]
-                    return (
-                      <label key={step} className="flex items-center gap-3">
-                        <input
-                          type="checkbox"
-                          className="w-5 h-5"
-                          checked={!!val}
-                          onChange={(e) => {
-                            setLocalAutoApprove((prev) => ({ ...prev, [step]: e.target.checked }))
-                          }}
+                      <hr className="border-gray-200" />
+
+                      <div className="text-sm font-semibold text-gray-900">Global Workflow Settings</div>
+
+                      <div>
+                        <h3 className="text-sm font-semibold mb-1">Default Models</h3>
+                        <p className="text-xs text-gray-500 mb-3">{t('workflow.defaultModelsDescription')}</p>
+                        <div className="flex items-center gap-2">
+                          <DropdownSelect
+                            className="w-auto"
+                            placeholder="Set all steps to..."
+                            options={(models || []).map((m: any) => ({ value: m.id, label: m.name }))}
+                            value=""
+                            onChange={(modelId) => {
+                              if (modelId) {
+                                const next: Record<string, string> = {}
+                                for (const s of steps) next[s] = modelId
+                                setLocalDefaultModels((prev) => ({ ...prev, ...next }))
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <h3 className="text-sm font-semibold mb-1">Default Context Globs</h3>
+                        <p className="text-xs text-gray-500 mb-3">{t('workflow.defaultContextGlobsDescription')}</p>
+                        <textarea
+                          className="border border-gray-300 px-3 py-2 rounded w-full h-20 font-mono text-sm bg-white text-gray-900"
+                          value={localStepGlobs.default || ''}
+                          placeholder={getGlobalGlobsPlaceholder('default')}
+                          onChange={(e) => setLocalStepGlobs((prev) => ({ ...prev, default: e.target.value }))}
                         />
-                        <span className="capitalize">{step}</span>
-                        {!overridden && (
-                          <span className="text-xs text-gray-400">(global: {globalConfig.autoApprove?.[step] ? 'on' : 'off'})</span>
-                        )}
-                      </label>
-                    )
-                  })}
-                </div>
-              </div>
+                      </div>
 
-              <div>
-                <h3 className="text-sm font-semibold mb-2">Parallel Concurrency</h3>
-                <input
-                  type="number"
-                  className="border border-gray-300 px-3 py-2 rounded w-32"
-                  value={localConcurrency}
-                  placeholder={String(globalConfig.parallelConcurrency ?? 3)}
-                  onChange={(e) => setLocalConcurrency(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <h3 className="text-sm font-semibold mb-2">Context Globs</h3>
-                <p className="text-xs text-gray-500 mb-2">One glob per line. Leave empty to inherit global defaults.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {globKeys.map((key) => (
-                    <div key={key}>
-                      <label className="block text-xs font-medium text-gray-600 mb-1 capitalize">{key === 'default' ? 'Default' : key}</label>
-                      <textarea
-                        className="border border-gray-300 px-3 py-2 rounded w-full h-20 font-mono text-sm"
-                        value={localStepGlobs[key] || ''}
-                        placeholder={getGlobalGlobsPlaceholder(key)}
-                        onChange={(e) => setLocalStepGlobs((prev) => ({ ...prev, [key]: e.target.value }))}
-                      />
+                      <div>
+                        <h3 className="text-sm font-semibold mb-1">Parallel Concurrency</h3>
+                        <p className="text-xs text-gray-500 mb-3">{t('workflow.parallelConcurrencyDescription')}</p>
+                        <input
+                          type="number"
+                          className="border border-gray-300 px-3 py-2 rounded w-32"
+                          value={localConcurrency}
+                          placeholder={String(globalConfig.parallelConcurrency ?? 3)}
+                          onChange={(e) => setLocalConcurrency(e.target.value)}
+                        />
+                      </div>
                     </div>
-                  ))}
-                </div>
-              </div>
+                  )}
 
-              <div>
-                <h3 className="text-sm font-semibold mb-2">Step Prompts</h3>
-                <p className="text-xs text-gray-500 mb-2">Leave empty to inherit global prompts.</p>
-                <div className="space-y-3">
-                  {steps.filter((s) => s !== 'done').map((step) => (
-                    <div key={step}>
-                      <label className="block text-xs font-medium text-gray-600 mb-1 capitalize">{step}</label>
-                      <textarea
-                        className="border border-gray-300 px-3 py-2 rounded w-full h-24 font-mono text-sm"
-                        value={localPrompts[step] || ''}
-                        placeholder={getGlobalPromptPlaceholder(step) || '(use default)'}
-                        onChange={(e) => setLocalPrompts((prev) => ({ ...prev, [step]: e.target.value }))}
-                      />
-                    </div>
-                  ))}
+
                 </div>
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 mt-6">
+            <div className="p-6 border-t flex justify-end gap-2">
               <button className="px-4 py-2 rounded text-sm text-gray-700 hover:bg-gray-100" onClick={() => setShowConfigModal(false)}>
                 Cancel
               </button>

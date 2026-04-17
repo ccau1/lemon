@@ -2,6 +2,7 @@ import type { WorkflowStep } from '@lemon/shared'
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { formatStatus } from '../utils.ts'
 import MarkdownSections from './MarkdownSections.tsx'
+import PillToggle from './common/PillToggle.tsx'
 
 const steps: WorkflowStep[] = ['spec', 'plan', 'tasks']
 
@@ -9,18 +10,120 @@ function stepIndex(step: WorkflowStep) {
   return steps.indexOf(step)
 }
 
-function StatusIcon({ status, step, effectiveStep, outdated }: { status: string; step: WorkflowStep; effectiveStep: WorkflowStep; outdated?: boolean }) {
+function polarToCartesian(cx: number, cy: number, r: number, angleInDegrees: number) {
+  const angleInRadians = (angleInDegrees - 90) * Math.PI / 180.0
+  return {
+    x: cx + r * Math.cos(angleInRadians),
+    y: cy + r * Math.sin(angleInRadians),
+  }
+}
+
+function describeArc(x: number, y: number, r: number, startAngle: number, endAngle: number) {
+  const start = polarToCartesian(x, y, r, endAngle)
+  const end = polarToCartesian(x, y, r, startAngle)
+  const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1'
+  return ['M', start.x, start.y, 'A', r, r, 0, largeArcFlag, 0, end.x, end.y].join(' ')
+}
+
+function TaskProgressIcon({ tasks }: { tasks: any[] }) {
+  const total = tasks.length
+  const completed = tasks.filter((t) => t.status === 'done' || t.done).length
+  const gap = 2 // degrees
+  const usableAngle = 180 - gap * 2
+  const internalGaps = Math.max(0, total - 1)
+  const segmentAngle = total > 0 ? (usableAngle - internalGaps * gap) / total : 0
+  const segments = []
+  for (let i = 0; i < total; i++) {
+    const start = gap + i * (segmentAngle + gap)
+    const end = start + segmentAngle
+    segments.push({ start, end, done: i < completed })
+  }
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24">
+      <path
+        d={describeArc(12, 12, 10, 180, 360)}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        className="text-indigo-600"
+      />
+      {segments.map((s, i) => (
+        <path
+          key={i}
+          d={describeArc(12, 12, 10, s.start, s.end)}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          className={s.done ? 'text-indigo-600' : 'text-gray-300'}
+        />
+      ))}
+    </svg>
+  )
+}
+
+function TaskHalfCircleIcon({ colorClass }: { colorClass: string }) {
+  return (
+    <svg className={`w-4 h-4 ${colorClass}`} fill="none" viewBox="0 0 24 24">
+      <path
+        d={describeArc(12, 12, 10, 180, 360)}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+      />
+    </svg>
+  )
+}
+
+function StatusIcon({ status, step, effectiveStep, outdated, isRunning, tasks }: { status: string; step: WorkflowStep; effectiveStep: WorkflowStep; outdated?: boolean; isRunning?: boolean; tasks?: any[] }) {
   const idx = stepIndex(step)
   const effIdx = stepIndex(effectiveStep)
   const isError = status === 'error' && step === effectiveStep
   const isPendingReview = status === 'awaiting_review' && step === effectiveStep
   const isCurrent = idx === effIdx && status !== 'done'
   const isDone = idx < effIdx || status === 'done'
+  const isProcessing = step === effectiveStep && (isRunning || (status !== 'awaiting_review' && status !== 'error' && status !== 'done'))
 
   if (outdated) {
     return (
       <svg className="w-4 h-4 text-orange-900" fill="currentColor" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="10" />
+      </svg>
+    )
+  }
+  if (step === 'tasks' && tasks && tasks.length > 0) {
+    if (status === 'implement') {
+      return <TaskProgressIcon tasks={tasks} />
+    }
+    if (isDone) {
+      return (
+        <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      )
+    }
+    if (isError) {
+      return (
+        <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      )
+    }
+    if (isProcessing) {
+      return (
+        <svg className="animate-spin h-4 w-4 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      )
+    }
+    return <TaskHalfCircleIcon colorClass={isPendingReview ? 'text-orange-500' : isCurrent ? 'text-indigo-600' : 'text-gray-400'} />
+  }
+  if (isProcessing) {
+    return (
+      <svg className="animate-spin h-4 w-4 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
       </svg>
     )
   }
@@ -72,6 +175,98 @@ function CloseIcon() {
     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
     </svg>
+  )
+}
+
+function TicketActionsMenu({
+  isArchived,
+  onArchive,
+  onUnarchive,
+  onDelete,
+}: {
+  isArchived: boolean
+  onArchive?: () => void
+  onUnarchive?: () => void
+  onDelete?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="border border-gray-300 text-gray-600 px-2 py-2 rounded text-sm hover:bg-gray-50"
+        aria-label="More actions"
+        title="More actions"
+      >
+        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+          <circle cx="12" cy="6" r="2" />
+          <circle cx="12" cy="12" r="2" />
+          <circle cx="12" cy="18" r="2" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 z-10 mt-1 w-40 bg-white border border-gray-300 rounded shadow-lg py-1">
+          {isArchived ? (
+            <>
+              <button
+                className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50"
+                onClick={() => {
+                  setOpen(false)
+                  onUnarchive?.()
+                }}
+              >
+                Unarchive
+              </button>
+              <button
+                className="w-full text-left text-sm px-3 py-2 text-red-700 hover:bg-red-50"
+                onClick={() => {
+                  setOpen(false)
+                  if (window.confirm('Permanently delete this ticket?')) {
+                    onDelete?.()
+                  }
+                }}
+              >
+                Delete
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50"
+                onClick={() => {
+                  setOpen(false)
+                  onArchive?.()
+                }}
+              >
+                Archive
+              </button>
+              <button
+                className="w-full text-left text-sm px-3 py-2 text-red-700 hover:bg-red-50"
+                onClick={() => {
+                  setOpen(false)
+                  if (window.confirm('Permanently delete this ticket?')) {
+                    onDelete?.()
+                  }
+                }}
+              >
+                Delete
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -129,12 +324,20 @@ function TaskStatusBadge({ status }: { status?: string }) {
   }
 }
 
-function TasksPanel({ tasks, outdated }: { tasks?: any[]; outdated?: boolean }) {
+function TasksPanel({ tasks, outdated, autoApprove, onToggleAutoApprove }: { tasks?: any[]; outdated?: boolean; autoApprove?: boolean; onToggleAutoApprove?: (value: boolean) => void }) {
   return (
     <div className={`bg-white p-4 rounded shadow ${outdated ? 'border-2 border-yellow-400' : ''}`}>
       <div className="flex items-center justify-between mb-2">
         <h2 className="font-semibold">Tasks</h2>
-        {outdated && <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-medium">Outdated</span>}
+        <div className="flex items-center gap-2">
+          {onToggleAutoApprove && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-500">Auto-approve</span>
+              <PillToggle value={autoApprove ?? false} onChange={onToggleAutoApprove} />
+            </div>
+          )}
+          {outdated && <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-medium">Outdated</span>}
+        </div>
       </div>
       <ul className="text-sm space-y-4">
         {tasks && tasks.length ? tasks.map((t: any, idx: number) => (
@@ -206,6 +409,8 @@ function ChatPanel({ chatTurns }: { chatTurns: Array<{ user: string; assistant?:
           const isCollapsed = collapsed.has(idx)
           const canToggle = turn.status === 'responded'
           const statusColor = turn.status === 'fetching' ? 'text-indigo-600' : turn.status === 'responded' ? 'text-green-600' : 'text-red-600'
+          const isQuestion = turn.assistant?.startsWith('QUESTION:')
+          const assistantContent = isQuestion ? turn.assistant!.slice('QUESTION:'.length).trim() : turn.assistant
           return (
             <div key={idx} className="space-y-1">
               <button
@@ -238,9 +443,9 @@ function ChatPanel({ chatTurns }: { chatTurns: Array<{ user: string; assistant?:
                 </div>
               )}
               {!isCollapsed && turn.status === 'responded' && turn.assistant && (
-                <div className="text-sm p-2 rounded bg-white border">
-                  <div className="text-xs font-bold uppercase text-gray-500 mb-1">assistant</div>
-                  <div className="whitespace-pre-wrap">{turn.assistant}</div>
+                <div className={`text-sm p-2 rounded border ${isQuestion ? 'bg-indigo-50 border-indigo-200' : 'bg-white'}`}>
+                  <div className={`text-xs font-bold uppercase mb-1 ${isQuestion ? 'text-indigo-600' : 'text-gray-500'}`}>{isQuestion ? 'AI Question' : 'assistant'}</div>
+                  <div className="whitespace-pre-wrap">{assistantContent}</div>
                 </div>
               )}
               {turn.status === 'fetching' && (
@@ -267,11 +472,16 @@ interface MarkdownSectionProps {
   effectiveStep: WorkflowStep
   isRunning?: boolean
   isChatPending?: boolean
+  isArchived?: boolean
   onApprove?: () => void
   onSendChat?: (message: string) => void
+  onRegenerate?: (step: WorkflowStep) => void
+  autoApprove?: boolean
+  onToggleAutoApprove?: (value: boolean) => void
   onExpand: () => void
   onCaptureScroll: (ratio: number) => void
   onMarkdownRef?: (el: HTMLDivElement | null) => void
+  chatTurns?: Array<{ user: string; assistant?: string; status: 'fetching' | 'responded' | 'failed'; error?: string }>
 }
 
 function MarkdownSection({
@@ -283,18 +493,31 @@ function MarkdownSection({
   effectiveStep,
   isRunning,
   isChatPending,
+  isArchived,
   onApprove,
   onSendChat,
+  onRegenerate,
+  autoApprove,
+  onToggleAutoApprove,
   onExpand,
   onCaptureScroll,
   onMarkdownRef,
+  chatTurns,
 }: MarkdownSectionProps) {
   const [comment, setComment] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const markdownRef = useRef<HTMLDivElement>(null)
-  const showApprove = ticketStatus === 'awaiting_review' && step === effectiveStep && !outdated
-  const canComment = ticketStatus === 'awaiting_review' || ticketStatus === 'error'
+  const showApprove = ticketStatus === 'awaiting_review' && step === effectiveStep && !outdated && !isArchived
+  const canComment = (ticketStatus === 'awaiting_review' || ticketStatus === 'error') && !isArchived
   const isBusy = isChatPending || isRunning || !canComment
+  const lastQuestion = chatTurns
+    ?.slice()
+    .reverse()
+    .find((t) => t.assistant?.startsWith('QUESTION:'))
+    ?.assistant
+    ?.slice('QUESTION:'.length)
+    .trim()
+  const hasContent = !!content
 
   useEffect(() => {
     const el = textareaRef.current
@@ -326,6 +549,12 @@ function MarkdownSection({
           {outdated && <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-medium">Outdated</span>}
         </div>
         <div className="flex items-center gap-2">
+          {onToggleAutoApprove && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-500">Auto-approve</span>
+              <PillToggle value={autoApprove ?? false} onChange={onToggleAutoApprove} />
+            </div>
+          )}
           {showApprove && (
             <button
               className="px-3 py-1 rounded text-xs font-medium bg-green-600 text-white hover:bg-green-700"
@@ -334,19 +563,39 @@ function MarkdownSection({
               Approve
             </button>
           )}
+          {onRegenerate && !isRunning && (
+            <button
+              className="inline-flex items-center justify-center p-1.5 rounded bg-white/80 hover:bg-white border shadow-sm text-gray-600 hover:text-gray-900"
+              onClick={() => onRegenerate(step)}
+              aria-label="Regenerate"
+              title="Regenerate"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          )}
           <button
-            className="inline-flex items-center justify-center p-1.5 rounded bg-white/80 hover:bg-white border shadow-sm text-gray-600 hover:text-gray-900"
+            className="inline-flex items-center justify-center p-1.5 rounded bg-white/80 hover:bg-white border shadow-sm text-gray-600 hover:text-gray-900 disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={handleExpand}
             aria-label="Expand"
             title="Expand"
+            disabled={!hasContent}
           >
             <ExpandIcon />
           </button>
         </div>
       </div>
       <div ref={setMarkdownRef} className={`${markdownWrapClasses} flex-1 overflow-y-auto min-h-0`}>
-        {content ? (
+        {hasContent ? (
           <MarkdownSections content={content} />
+        ) : lastQuestion ? (
+          <div className="flex flex-col items-center justify-center h-full text-center p-8">
+            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-6 max-w-lg w-full">
+              <h3 className="text-indigo-900 font-medium mb-2">The AI needs clarification</h3>
+              <p className="text-indigo-800 whitespace-pre-wrap">{lastQuestion}</p>
+            </div>
+          </div>
         ) : (
           '-'
         )}
@@ -365,7 +614,17 @@ function MarkdownSection({
             className={`w-full border bg-gray-100 text-gray-900 placeholder-gray-500 px-3 py-2 rounded text-sm disabled:opacity-60 resize-none overflow-hidden transition-colors ${
               isChatPending ? 'border-indigo-400 pr-10 animate-pulse' : 'border-gray-300'
             }`}
-            placeholder={isChatPending ? 'Revising...' : !canComment ? 'Processing...' : `Comment on how to revise this ${title.toLowerCase()}...`}
+            placeholder={
+              isChatPending
+                ? 'Revising...'
+                : isArchived
+                ? 'Archived'
+                : !canComment
+                ? 'Processing...'
+                : !hasContent && lastQuestion
+                ? `Answer the AI's question...`
+                : `Comment on how to revise this ${title.toLowerCase()}...`
+            }
             value={comment}
             disabled={isBusy}
             onChange={(e) => setComment(e.target.value)}
@@ -409,7 +668,13 @@ export interface TicketViewProps {
   setExpandedTab: (step: WorkflowStep | null) => void
   onApprove?: () => void
   onSendChat?: (message: string) => void
+  onRegenerate?: (step: WorkflowStep) => void
   onUpdateTitle?: (title: string) => void
+  onArchive?: () => void
+  onUnarchive?: () => void
+  onDelete?: () => void
+  stepAutoApprove?: Record<WorkflowStep, boolean>
+  onToggleStepAutoApprove?: (step: WorkflowStep, value: boolean) => void
 }
 
 export default function TicketView({
@@ -431,10 +696,18 @@ export default function TicketView({
   setExpandedTab,
   onApprove,
   onSendChat,
+  onRegenerate,
   onUpdateTitle,
+  onArchive,
+  onUnarchive,
+  onDelete,
+  stepAutoApprove,
+  onToggleStepAutoApprove,
 }: TicketViewProps) {
-  const showApprovalActions = ticket.status === 'awaiting_review' && expandedTab === effectiveStep
-  const showRunButton = !_isRunning && ticket.status !== 'done' && ticket.status !== 'awaiting_review'
+  const isArchived = !!ticket.archivedAt
+  const isLocked = ticket.status === 'implement' || ticket.status === 'done'
+  const showApprovalActions = ticket.status === 'awaiting_review' && expandedTab === effectiveStep && !isArchived
+  const showRunButton = !_isRunning && ticket.status !== 'running' && ticket.status !== 'done' && ticket.status !== 'awaiting_review' && !isArchived
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [editedTitle, setEditedTitle] = useState(ticket.title)
 
@@ -523,9 +796,9 @@ export default function TicketView({
               />
             ) : (
               <h1
-                className="text-2xl font-bold cursor-text hover:text-indigo-600"
-                onClick={() => setIsEditingTitle(true)}
-                title="Click to edit"
+                className={`text-2xl font-bold ${isArchived ? '' : 'cursor-text hover:text-indigo-600'}`}
+                onClick={() => { if (!isArchived) setIsEditingTitle(true) }}
+                title={isArchived ? '' : 'Click to edit'}
               >
                 {ticket.title}
               </h1>
@@ -536,6 +809,7 @@ export default function TicketView({
             <div className="text-sm text-gray-700 mt-1 whitespace-pre-wrap">{ticket.description}</div>
           )}
           <div className="text-sm text-gray-500 uppercase tracking-wide mt-1">{formatStatus(ticket.status)}</div>
+          {isArchived && <div className="text-xs text-gray-400 mt-1">Archived</div>}
         </div>
         <div className="flex gap-2 flex-shrink-0">
           {showRunButton && (
@@ -552,6 +826,14 @@ export default function TicketView({
               )}
               {_isRunning ? 'Running...' : 'Run'}
             </button>
+          )}
+          {(isArchived || !isLocked) && (
+            <TicketActionsMenu
+              isArchived={isArchived}
+              onArchive={onArchive}
+              onUnarchive={onUnarchive}
+              onDelete={onDelete}
+            />
           )}
         </div>
       </div>
@@ -587,6 +869,8 @@ export default function TicketView({
               step={step}
               effectiveStep={effectiveStep}
               outdated={step === 'plan' ? plan?.outdated : step === 'tasks' ? tasks?.some((t) => t.outdated) : false}
+              isRunning={_isRunning}
+              tasks={step === 'tasks' ? tasks : undefined}
             />
             {step}
           </button>
@@ -605,11 +889,16 @@ export default function TicketView({
                 effectiveStep={effectiveStep}
                 isRunning={_isRunning}
                 isChatPending={isChatPending}
+                isArchived={isArchived}
                 onApprove={onApprove}
                 onSendChat={onSendChat}
+                onRegenerate={onRegenerate}
+                autoApprove={stepAutoApprove?.spec}
+                onToggleAutoApprove={(v) => onToggleStepAutoApprove?.('spec', v)}
                 onExpand={() => setExpandedTab('spec')}
                 onCaptureScroll={setSavedScrollRatio}
                 onMarkdownRef={setSpecRef}
+                chatTurns={chatTurns}
               />
             )}
             {activeTab === 'plan' && (
@@ -622,15 +911,25 @@ export default function TicketView({
                 effectiveStep={effectiveStep}
                 isRunning={_isRunning}
                 isChatPending={isChatPending}
+                isArchived={isArchived}
                 onApprove={onApprove}
                 onSendChat={onSendChat}
+                onRegenerate={onRegenerate}
+                autoApprove={stepAutoApprove?.plan}
+                onToggleAutoApprove={(v) => onToggleStepAutoApprove?.('plan', v)}
                 onExpand={() => setExpandedTab('plan')}
                 onCaptureScroll={setSavedScrollRatio}
                 onMarkdownRef={setPlanRef}
+                chatTurns={chatTurns}
               />
             )}
             {activeTab === 'tasks' && (
-              <TasksPanel tasks={tasks} outdated={tasks?.some((t) => t.outdated)} />
+              <TasksPanel
+                tasks={tasks}
+                outdated={tasks?.some((t) => t.outdated)}
+                autoApprove={stepAutoApprove?.tasks}
+                onToggleAutoApprove={(v) => onToggleStepAutoApprove?.('tasks', v)}
+              />
             )}
           </div>
           <ChatPanel chatTurns={chatTurns} />
@@ -657,17 +956,31 @@ export default function TicketView({
                 const expandedContent = (() => {
                   switch (expandedTab) {
                     case 'spec':
-                      return spec?.content || '-'
+                      return spec?.content || null
                     case 'plan':
-                      return plan?.content || '-'
+                      return plan?.content || null
                     default:
-                      return '-'
+                      return null
                   }
                 })()
+                const expandedQuestion = chatTurns
+                  ?.slice()
+                  .reverse()
+                  .find((t) => t.assistant?.startsWith('QUESTION:'))
+                  ?.assistant
+                  ?.slice('QUESTION:'.length)
+                  .trim()
                 return (
                   <div className={markdownWrapClasses + ' min-h-0'}>
-                    {expandedContent !== '-' ? (
+                    {expandedContent ? (
                       <MarkdownSections content={expandedContent} />
+                    ) : expandedQuestion ? (
+                      <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-6 max-w-lg w-full">
+                          <h3 className="text-indigo-900 font-medium mb-2">The AI needs clarification</h3>
+                          <p className="text-indigo-800 whitespace-pre-wrap">{expandedQuestion}</p>
+                        </div>
+                      </div>
                     ) : (
                       '-'
                     )}
@@ -676,7 +989,7 @@ export default function TicketView({
               })()}
             </div>
           </div>
-          {onSendChat && expandedTab !== 'tasks' && !(expandedTab === 'plan' && plan?.outdated) && (
+          {onSendChat && expandedTab !== 'tasks' && !(expandedTab === 'plan' && plan?.outdated) && !isArchived && (
             <div className="shrink-0 p-6 border-t bg-white">
               <div className="max-w-5xl mx-auto flex items-center gap-3">
                 <div className="flex-1 relative">
@@ -686,13 +999,21 @@ export default function TicketView({
                     className={`w-full border bg-gray-100 text-gray-900 placeholder-gray-500 px-3 py-2 rounded text-sm disabled:opacity-60 resize-none overflow-hidden transition-colors ${
                       isChatPending ? 'border-indigo-400 pr-10 animate-pulse' : 'border-gray-300'
                     }`}
-                    placeholder={
-                      isChatPending
-                        ? 'Revising...'
-                        : !(ticket.status === 'awaiting_review' || ticket.status === 'error')
-                        ? 'Processing...'
-                        : `Comment on how to revise this ${expandedTab}...`
-                    }
+                    placeholder={(() => {
+                      if (isChatPending) return 'Revising...'
+                      if (isArchived) return 'Archived'
+                      if (!(ticket.status === 'awaiting_review' || ticket.status === 'error')) return 'Processing...'
+                      const expandedQuestion = chatTurns
+                        ?.slice()
+                        .reverse()
+                        .find((t) => t.assistant?.startsWith('QUESTION:'))
+                        ?.assistant
+                        ?.slice('QUESTION:'.length)
+                        .trim()
+                      const hasExpandedContent = expandedTab === 'spec' ? spec?.content : expandedTab === 'plan' ? plan?.content : false
+                      if (!hasExpandedContent && expandedQuestion) return "Answer the AI's question..."
+                      return `Comment on how to revise this ${expandedTab}...`
+                    })()}
                     value={expandedComment}
                     disabled={isChatPending || _isRunning || !(ticket.status === 'awaiting_review' || ticket.status === 'error')}
                     onChange={(e) => setExpandedComment(e.target.value)}
@@ -719,6 +1040,12 @@ export default function TicketView({
                     </div>
                   )}
                 </div>
+                {expandedTab && onToggleStepAutoApprove && (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-xs text-gray-500">Auto-approve</span>
+                    <PillToggle value={stepAutoApprove?.[expandedTab] ?? false} onChange={(v) => onToggleStepAutoApprove(expandedTab, v)} />
+                  </div>
+                )}
                 {showApprovalActions && (
                   <button
                     className="px-4 py-2 rounded-full text-sm font-medium bg-green-600 text-white hover:bg-green-700 shadow shrink-0"

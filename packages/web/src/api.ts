@@ -7,7 +7,8 @@ async function fetchJson(path: string, init?: RequestInit) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    const msg = err.message || err.error || `HTTP ${res.status}`;
+    throw new Error(msg);
   }
   return res.json();
 }
@@ -27,18 +28,23 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
 
-  getTickets: (workspaceId: string, projectId?: string) => {
+  getTickets: (workspaceId: string, projectId?: string, includeArchived?: boolean) => {
     const q = new URLSearchParams({ workspaceId });
     if (projectId) q.set("projectId", projectId);
+    if (includeArchived) q.set("includeArchived", "true");
     return fetchJson(`/api/tickets?${q.toString()}`);
   },
-  getAllTickets: () => fetchJson("/api/tickets/all"),
+  getAllTickets: (includeArchived?: boolean) => {
+    const q = new URLSearchParams();
+    if (includeArchived) q.set("includeArchived", "true");
+    return fetchJson(`/api/tickets/all?${q.toString()}`);
+  },
   createTicket: (workspaceId: string, body: { projectId: string; title: string; description: string }) =>
     fetchJson(`/api/tickets?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  updateTicket: (workspaceId: string, ticketId: string, body: { title?: string; description?: string }) =>
+  updateTicket: (workspaceId: string, ticketId: string, body: { title?: string; description?: string; autoApprove?: Partial<Record<string, boolean>> }) =>
     fetchJson(`/api/tickets/${ticketId}?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "PATCH",
       body: JSON.stringify(body),
@@ -75,6 +81,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
+  archiveTicket: (workspaceId: string, ticketId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/archive?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  unarchiveTicket: (workspaceId: string, ticketId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/unarchive?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  deleteTicket: (workspaceId: string, ticketId: string) =>
+    fetchJson(`/api/tickets/${ticketId}?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "DELETE",
+      headers: {},
+    }),
   saveSpec: (workspaceId: string, ticketId: string, content: string) =>
     fetchJson(`/api/tickets/${ticketId}/spec?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "POST",
@@ -107,6 +128,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  regenerateTicket: (workspaceId: string, ticketId: string, step: string) =>
+    fetchJson(`/api/tickets/${ticketId}/regenerate?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify({ step }),
+    }),
 
   getModels: () => fetchJson("/api/models"),
   createModel: (body: Record<string, unknown>) =>
@@ -124,6 +150,7 @@ export const api = {
   },
   getConfigRaw: (workspaceId: string) =>
     fetchJson(`/api/config/raw?workspaceId=${encodeURIComponent(workspaceId)}`),
+  getConfigDefaults: () => fetchJson("/api/config/defaults") as Promise<{ prompts: Record<string, string> }>,
   setConfig: (body: { key: string; value: unknown; workspaceId?: string }) =>
     fetchJson("/api/config", { method: "POST", body: JSON.stringify(body) }),
   setDefaultModel: (body: { step: string; modelId: string; workspaceId?: string }) =>
@@ -146,4 +173,18 @@ export const api = {
   setTheme: (theme: string) => fetchJson("/api/config", { method: "POST", body: JSON.stringify({ key: "theme", value: theme }) }),
 
   getDocs: () => fetchJson("/api/docs") as Promise<{ tree: any[]; contents: Record<string, string> }>,
+
+  getIntegrations: () => fetchJson("/api/integrations"),
+  getIntegrationTypes: () => fetchJson("/api/integrations/types") as Promise<
+    Array<{ id: string; name: string; description?: string; form: { fields: any[] }; ticketCreate: any }>
+  >,
+  createIntegration: (body: { type: string; name: string; enabled: boolean; config: Record<string, unknown> }) =>
+    fetchJson("/api/integrations", { method: "POST", body: JSON.stringify(body) }),
+  updateIntegration: (id: string, body: Partial<{ name: string; enabled: boolean; config: Record<string, unknown> }>) =>
+    fetchJson(`/api/integrations/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteIntegration: (id: string) => fetchJson(`/api/integrations/${id}`, { method: "DELETE" }),
+  searchIntegrationTickets: (id: string, q?: string) =>
+    fetchJson(`/api/integrations/${id}/search${q ? `?q=${encodeURIComponent(q)}` : ""}`) as Promise<{
+      results: Array<{ id: string; title: string; description: string; url: string }>;
+    }>,
 };

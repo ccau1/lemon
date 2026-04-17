@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { api } from '../api.ts'
 import { useEffect, useState } from 'react'
 import { formatStatus } from '../utils.ts'
+import IntegrationImportButtons from '../components/IntegrationImportButtons.tsx'
 
 const LS_KEY = 'project_page_ticket_form'
 
@@ -97,7 +98,13 @@ export default function ProjectPage() {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between">
+          <IntegrationImportButtons
+            onImport={({ title: t, description: d }) => {
+              setTitle(t)
+              setDescription(d)
+            }}
+          />
           <button
             className="bg-indigo-600 text-white px-4 py-2 rounded"
             onClick={() => createTicket.mutate({ projectId: projectId!, title, description })}

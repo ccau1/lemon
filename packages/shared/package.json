@@ -9,6 +9,14 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./integrations/jira": {
+      "import": "./dist/integrations/jira/index.js",
+      "types": "./dist/integrations/jira/index.d.ts"
+    },
+    "./integrations/shortcut": {
+      "import": "./dist/integrations/shortcut/index.js",
+      "types": "./dist/integrations/shortcut/index.d.ts"
     }
   },
   "scripts": {

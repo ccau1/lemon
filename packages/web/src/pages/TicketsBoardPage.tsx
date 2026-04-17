@@ -2,10 +2,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
 import { api } from '../api.ts'
 import { useSelectedWorkspace } from '../WorkspaceContext.tsx'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import TicketModal from '../components/TicketModal.tsx'
 import { DropdownFilter, DropdownSelect } from '../components/Dropdown.tsx'
+import Checkbox from '../components/common/Checkbox.tsx'
 import { formatStatus } from '../utils.ts'
+import IntegrationImportButtons from '../components/IntegrationImportButtons.tsx'
 
 const stepOrder = ['spec', 'plan', 'tasks', 'implement', 'done'] as const
 const metaStatuses = ['active', 'awaiting_review', 'queued', 'error'] as const
@@ -19,6 +21,8 @@ function statusBadgeClasses(status: string) {
       return 'bg-yellow-100 text-yellow-800'
     case 'queued':
       return 'bg-blue-100 text-blue-800'
+    case 'running':
+      return 'bg-indigo-100 text-indigo-800'
     case 'error':
       return 'bg-red-100 text-red-800'
     default:
@@ -27,7 +31,7 @@ function statusBadgeClasses(status: string) {
 }
 
 function deriveDisplayStatus(rawStatus: string) {
-  if (stepOrder.includes(rawStatus as any)) return 'active'
+  if (stepOrder.includes(rawStatus as any) || rawStatus === 'running') return 'active'
   return rawStatus
 }
 
@@ -54,9 +58,12 @@ export default function TicketsBoardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { selectedWorkspaceId } = useSelectedWorkspace()
   const { data: workspaces } = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
+  const paramArchived = searchParams.get('archived') === 'true'
+  const [showArchived, setShowArchived] = useState(paramArchived)
+
   const { data: tickets } = useQuery({
-    queryKey: selectedWorkspaceId === 'all' ? ['allTickets'] : ['tickets', selectedWorkspaceId],
-    queryFn: selectedWorkspaceId === 'all' ? api.getAllTickets : () => api.getTickets(selectedWorkspaceId),
+    queryKey: selectedWorkspaceId === 'all' ? ['allTickets', showArchived] : ['tickets', selectedWorkspaceId, showArchived],
+    queryFn: selectedWorkspaceId === 'all' ? () => api.getAllTickets(showArchived) : () => api.getTickets(selectedWorkspaceId, undefined, showArchived),
   })
 
   const paramWorkspaces = searchParams.get('workspace')?.split(',').filter(Boolean) || []
@@ -172,8 +179,24 @@ export default function TicketsBoardPage() {
     else updateQuery('view', next)
   }
 
+  const setArchivedAndQuery = (next: boolean) => {
+    setShowArchived(next)
+    if (next) updateQuery('archived', 'true')
+    else updateQuery('archived', null)
+  }
+
   const openTicketId = searchParams.get('ticket')
   const openTicket = tickets?.find((t: any) => t.id === openTicketId)
+  const modalWorkspaceIdRef = useRef<string>('')
+
+  useEffect(() => {
+    if (openTicket && !modalWorkspaceIdRef.current) {
+      modalWorkspaceIdRef.current = openTicket.workspaceId
+    }
+    if (!openTicketId) {
+      modalWorkspaceIdRef.current = ''
+    }
+  }, [openTicket, openTicketId])
 
   const openTicketQuery = (ticketId: string) => {
     const next = new URLSearchParams(searchParams)
@@ -319,6 +342,12 @@ export default function TicketsBoardPage() {
           onNone={statusFilter.none}
         />
 
+        <Checkbox
+          checked={showArchived}
+          onChange={setArchivedAndQuery}
+          label="Show archived"
+        />
+
         <div className="ml-auto flex items-center bg-gray-100 rounded p-1">
           {views.map((v) => (
             <button
@@ -342,10 +371,10 @@ export default function TicketsBoardPage() {
         <CardsView tickets={filteredTickets} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
       )}
 
-      {openTicketId && openTicket && (
+      {openTicketId && (
         <TicketModal
-          workspaceId={openTicket.workspaceId}
-          ticketId={openTicket.id}
+          workspaceId={openTicket?.workspaceId || modalWorkspaceIdRef.current}
+          ticketId={openTicketId}
           onClose={closeTicketQuery}
         />
       )}
@@ -355,7 +384,7 @@ export default function TicketsBoardPage() {
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
           onClick={(e) => { if (e.target === e.currentTarget) setShowModal(false) }}
         >
-          <div className="bg-white rounded-lg w-full max-w-lg p-6">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">New Ticket</h2>
               <button className="text-gray-500 hover:text-gray-800" onClick={() => setShowModal(false)}>Close</button>
@@ -401,20 +430,28 @@ export default function TicketsBoardPage() {
                   onChange={(e) => setModalDescription(e.target.value)}
                 />
               </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  className="px-4 py-2 rounded text-sm text-gray-700 hover:bg-gray-100"
-                  onClick={() => setShowModal(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="bg-indigo-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
-                  disabled={!modalWorkspaceId || !modalProjectId || !modalTitle.trim() || createTicket.isPending}
-                  onClick={() => createTicket.mutate()}
-                >
-                  {createTicket.isPending ? 'Creating...' : 'Create'}
-                </button>
+              <div className="flex items-center justify-between gap-2 pt-2">
+                <IntegrationImportButtons
+                  onImport={({ title: t, description: d }) => {
+                    setModalTitle(t)
+                    setModalDescription(d)
+                  }}
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    className="px-4 py-2 rounded text-sm text-gray-700 hover:bg-gray-100"
+                    onClick={() => setShowModal(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="bg-indigo-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+                    disabled={!modalWorkspaceId || !modalProjectId || !modalTitle.trim() || createTicket.isPending}
+                    onClick={() => createTicket.mutate()}
+                  >
+                    {createTicket.isPending ? 'Creating...' : 'Create'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -458,7 +495,7 @@ function ListView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; wor
           <div
             key={t.id}
             onClick={() => onOpenTicket(t.id)}
-            className="grid grid-cols-12 gap-4 px-4 py-3 items-center hover:bg-gray-50 cursor-pointer"
+            className={`grid grid-cols-12 gap-4 px-4 py-3 items-center cursor-pointer ${t.archivedAt ? 'bg-gray-100 opacity-75' : 'hover:bg-gray-50'}`}
           >
             <div className="col-span-5 font-medium truncate">{t.title}</div>
             <div className="col-span-2 text-sm text-gray-600 truncate">{workspaceMap.get(t.workspaceId) || t.workspaceName || 'Unknown'}</div>
@@ -467,6 +504,7 @@ function ListView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; wor
               <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status)}`}>
                 {formatStatus(t.status)}
               </span>
+              {t.archivedAt && <span className="ml-2 text-[10px] text-gray-500 uppercase tracking-wide">Archived</span>}
             </div>
             <div className="col-span-1 text-right">
               <span className="text-indigo-600 text-sm hover:underline">Open</span>
@@ -485,7 +523,7 @@ function CardsView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; wo
         <div
           key={t.id}
           onClick={() => onOpenTicket(t.id)}
-          className="bg-white p-4 rounded shadow hover:shadow-md block cursor-pointer"
+          className={`p-4 rounded shadow block cursor-pointer ${t.archivedAt ? 'bg-gray-100 opacity-75' : 'bg-white hover:shadow-md'}`}
         >
           <div className="font-medium mb-2">{t.title}</div>
           <div className="flex items-center justify-between">
@@ -495,6 +533,7 @@ function CardsView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; wo
             </span>
           </div>
           <div className="mt-2 text-xs text-gray-400 capitalize">{t.effectiveStep}</div>
+          {t.archivedAt && <div className="mt-1 text-[10px] text-gray-500 uppercase tracking-wide">Archived</div>}
         </div>
       ))}
     </div>
@@ -505,7 +544,7 @@ function TicketCard({ t, workspaceMap, onClick }: { t: any; workspaceMap: Map<st
   return (
     <div
       onClick={onClick}
-      className="block bg-white p-3 rounded shadow-sm text-sm hover:shadow cursor-pointer"
+      className={`block p-3 rounded shadow-sm text-sm hover:shadow cursor-pointer ${t.archivedAt ? 'bg-gray-100 opacity-75' : 'bg-white'}`}
     >
       <div className="font-medium mb-1">{t.title}</div>
       <div className="flex items-center justify-between gap-2">
@@ -514,6 +553,9 @@ function TicketCard({ t, workspaceMap, onClick }: { t: any; workspaceMap: Map<st
           {formatStatus(t.status)}
         </span>
       </div>
+      {t.archivedAt && (
+        <div className="mt-1 text-[10px] text-gray-500 uppercase tracking-wide">Archived</div>
+      )}
     </div>
   )
 }
