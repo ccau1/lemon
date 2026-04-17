@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../api.ts'
 import { useEffect, useState } from 'react'
+import { formatStatus } from '../utils.ts'
 
 const LS_KEY = 'project_page_ticket_form'
 
@@ -115,7 +116,7 @@ export default function ProjectPage() {
             >
               <div>
                 <div className="font-medium">{t.title}</div>
-                <div className="text-xs text-gray-500 uppercase">{t.status.replace('_', ' ')}</div>
+                <div className="text-xs text-gray-500 uppercase">{formatStatus(t.status)}</div>
               </div>
               <span className="text-indigo-600 text-sm">Open →</span>
             </Link>

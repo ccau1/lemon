@@ -12,12 +12,17 @@ export default function TicketModal({ workspaceId, ticketId, onClose }: TicketMo
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="bg-white rounded-lg w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden">
-        <div className="flex justify-between items-center px-6 py-4 border-b">
-          <h2 className="font-semibold text-lg">Ticket</h2>
-          <button className="text-gray-500 hover:text-gray-800" onClick={onClose}>Close</button>
-        </div>
-        <div className="flex-1 overflow-hidden p-6">
+      <div className="bg-white rounded-lg w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden relative">
+        <button
+          className="absolute top-4 right-6 p-2 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-800 z-10"
+          onClick={onClose}
+          aria-label="Close"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+        <div className="flex-1 overflow-hidden p-6 pt-10">
           <TicketContainer workspaceId={workspaceId} ticketId={ticketId} />
         </div>
       </div>

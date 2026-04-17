@@ -1,0 +1,21 @@
+{
+  "status": {
+    "active": "active",
+    "awaiting_review": "awaiting review",
+    "queued": "queued",
+    "error": "error",
+    "done": "done",
+    "running": "running",
+    "pending": "pending",
+    "spec": "spec",
+    "plan": "plan",
+    "tasks": "tasks",
+    "implement": "implement"
+  },
+  "step": {
+    "spec": "spec",
+    "plan": "plan",
+    "tasks": "tasks",
+    "implement": "implement"
+  }
+}

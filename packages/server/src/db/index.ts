@@ -39,6 +39,8 @@ export function getWorkspaceDb(dataDir: string, workspaceId: string): DB {
       title TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'spec',
+      error_step TEXT,
+      error_message TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -55,6 +57,7 @@ export function getWorkspaceDb(dataDir: string, workspaceId: string): DB {
       id TEXT PRIMARY KEY,
       ticket_id TEXT NOT NULL,
       content TEXT NOT NULL,
+      outdated INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -64,6 +67,8 @@ export function getWorkspaceDb(dataDir: string, workspaceId: string): DB {
       ticket_id TEXT NOT NULL,
       description TEXT NOT NULL,
       done INTEGER NOT NULL DEFAULT 0,
+      comment TEXT,
+      outdated INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -72,6 +77,7 @@ export function getWorkspaceDb(dataDir: string, workspaceId: string): DB {
       id TEXT PRIMARY KEY,
       ticket_id TEXT NOT NULL,
       content TEXT NOT NULL,
+      outdated INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -92,6 +98,16 @@ export function getWorkspaceDb(dataDir: string, workspaceId: string): DB {
       response TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS ticket_threads (
+      id TEXT PRIMARY KEY,
+      ticket_id TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      step TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
 
   // Migrate existing DBs: add description column if missing
@@ -99,11 +115,43 @@ export function getWorkspaceDb(dataDir: string, workspaceId: string): DB {
   if (!ticketColumns.some((c) => c.name === "description")) {
     sqlite.exec("ALTER TABLE tickets ADD COLUMN description TEXT NOT NULL DEFAULT ''");
   }
+  if (!ticketColumns.some((c) => c.name === "error_step")) {
+    sqlite.exec("ALTER TABLE tickets ADD COLUMN error_step TEXT");
+  }
+  if (!ticketColumns.some((c) => c.name === "error_message")) {
+    sqlite.exec("ALTER TABLE tickets ADD COLUMN error_message TEXT");
+  }
 
   // Migrate existing DBs: add status column to action_runs if missing
   const actionRunColumns = sqlite.prepare("PRAGMA table_info(action_runs)").all() as Array<{ name: string }>;
   if (!actionRunColumns.some((c) => c.name === "status")) {
     sqlite.exec("ALTER TABLE action_runs ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'");
+  }
+
+  // Migrate existing DBs: add outdated column if missing
+  const plansColumns = sqlite.prepare("PRAGMA table_info(plans)").all() as Array<{ name: string }>;
+  if (!plansColumns.some((c) => c.name === "outdated")) {
+    sqlite.exec("ALTER TABLE plans ADD COLUMN outdated INTEGER NOT NULL DEFAULT 0");
+  }
+  const tasksColumns = sqlite.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!tasksColumns.some((c) => c.name === "comment")) {
+    sqlite.exec("ALTER TABLE tasks ADD COLUMN comment TEXT");
+  }
+  if (!tasksColumns.some((c) => c.name === "outdated")) {
+    sqlite.exec("ALTER TABLE tasks ADD COLUMN outdated INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!tasksColumns.some((c) => c.name === "status")) {
+    sqlite.exec("ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'queued'");
+  }
+  if (!tasksColumns.some((c) => c.name === "error_message")) {
+    sqlite.exec("ALTER TABLE tasks ADD COLUMN error_message TEXT");
+  }
+  if (!tasksColumns.some((c) => c.name === "result")) {
+    sqlite.exec("ALTER TABLE tasks ADD COLUMN result TEXT");
+  }
+  const implColumns = sqlite.prepare("PRAGMA table_info(implementations)").all() as Array<{ name: string }>;
+  if (!implColumns.some((c) => c.name === "outdated")) {
+    sqlite.exec("ALTER TABLE implementations ADD COLUMN outdated INTEGER NOT NULL DEFAULT 0");
   }
 
   dbCache.set(key, db);

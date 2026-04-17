@@ -88,7 +88,8 @@ export class LlmService {
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>
   ): Promise<string> {
     const prompt = this.formatCliPrompt(messages);
-    const [cmd, args] = this.getCliCommand(config);
+    const [cmd, baseArgs] = this.getCliCommand(config);
+    const args = [...baseArgs, prompt];
     return new Promise((resolve, reject) => {
       const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "";
@@ -101,7 +102,13 @@ export class LlmService {
       child.stderr.on("data", (data) => {
         stderr += data;
       });
-      child.on("error", (err) => reject(new Error(`Failed to spawn ${cmd}: ${err.message}`)));
+      child.on("error", (err: any) => {
+        if (err.code === "ENOENT" && err.syscall === "spawn") {
+          reject(new Error(`Command '${cmd}' not found. Please install it or check your PATH.`));
+        } else {
+          reject(new Error(`Failed to spawn ${cmd}: ${err.message}`));
+        }
+      });
       child.on("close", (code) => {
         if (code !== 0) {
           reject(new Error(`${config.provider} exited with code ${code}: ${stderr || stdout}`));
@@ -109,7 +116,6 @@ export class LlmService {
           resolve(stdout.trim());
         }
       });
-      child.stdin.write(prompt);
       child.stdin.end();
     });
   }
@@ -119,14 +125,21 @@ export class LlmService {
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>
   ): Promise<AsyncIterable<string>> {
     const prompt = this.formatCliPrompt(messages);
-    const [cmd, args] = this.getCliCommand(config);
+    const [cmd, baseArgs] = this.getCliCommand(config);
+    const args = [...baseArgs, prompt];
     const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (data) => {
       stderr += data;
     });
-    child.stdin.write(prompt);
+    child.on("error", (err: any) => {
+      if (err.code === "ENOENT" && err.syscall === "spawn") {
+        stderr = `Command '${cmd}' not found. Please install it or check your PATH.`;
+      } else {
+        stderr = `Failed to spawn ${cmd}: ${err.message}`;
+      }
+    });
     child.stdin.end();
 
     return (async function* () {
@@ -134,7 +147,7 @@ export class LlmService {
         yield chunk.toString();
       }
       const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
-      if (code !== 0) {
+      if (code !== 0 || stderr) {
         throw new Error(`${config.provider} exited with code ${code}: ${stderr}`);
       }
     })();

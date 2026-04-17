@@ -88,7 +88,7 @@ export async function startServer(options: ServerOptions) {
   // Register routes
   await workspaceRoutes(app, { registry: workspaceRegistry, getDb });
   await projectRoutes(app, { getDb, registry: workspaceRegistry });
-  await ticketRoutes(app, { getDb, registry: workspaceRegistry });
+  await ticketRoutes(app, { getDb, registry: workspaceRegistry, engine: workflowEngine });
   await modelRoutes(app, { registry: modelRegistry });
   await configRoutes(app, { manager: configManager });
   await workflowRoutes(app, { getDb, llm: llmService, engine: workflowEngine, configManager, broadcast, workspaceRegistry });

@@ -81,6 +81,7 @@ export class ConfigManager {
       actions: { ...global.actions, ...workspace.actions },
       autoApprove: { ...global.autoApprove, ...workspace.autoApprove },
       defaultModels: { ...global.defaultModels, ...workspace.defaultModels },
+      prompts: { ...global.prompts, ...workspace.prompts },
       parallelConcurrency:
         workspace.parallelConcurrency ?? global.parallelConcurrency,
       contextGlobs: this.mergeContextGlobs(global.contextGlobs, workspace.contextGlobs),
@@ -111,6 +112,9 @@ export class ConfigManager {
       }
       if (partial.defaultModels !== undefined) {
         result.defaultModels = { ...result.defaultModels, ...partial.defaultModels };
+      }
+      if (partial.prompts !== undefined) {
+        result.prompts = { ...result.prompts, ...partial.prompts };
       }
       if (partial.parallelConcurrency !== undefined) {
         result.parallelConcurrency = partial.parallelConcurrency;
@@ -157,6 +161,12 @@ export class ConfigManager {
         done: false,
       },
       defaultModels: {},
+      prompts: {
+        spec: "You are an expert product manager. Write a clear, concise product spec in markdown. Use the following sections with ATX headings: # Title, ## Overview, ## In Scope, ## Out of Scope, ## Technical Requirements, ## File Structure, ## Acceptance Criteria. Use bullet lists under each section. Wrap file trees in triple backticks. Use the provided workspace context (README, docs, config files) to keep the spec realistic for the existing codebase. Do not include preamble like 'Here is the final spec:'; output only the markdown.",
+        plan: "You are a senior software architect. Given a spec, write a high-level implementation plan in markdown. Use the following sections with ATX headings: # Title, ## Overview, ## Key Files / Changes, ## Step-by-step Implementation, ## Testing Strategy, ## Risks and Considerations. Use bullet lists and numbered lists where appropriate. Wrap file trees or code snippets in triple backticks. Do not include preamble like 'Here is the plan:'; output only the markdown.",
+        tasks: 'You are a project manager. Given a plan, break it into a list of implementation tasks. Return ONLY a JSON array like [{"description":"...","done":false}, ...].',
+        implement: "You are a senior engineer. Given the tasks, describe the implementation approach, key code changes, and file names in markdown. Do not include preamble like 'Here is the implementation:'; output only the markdown.",
+      },
       parallelConcurrency: 3,
       contextGlobs: {
         default: [

@@ -5,19 +5,7 @@ import { useEffect, useState } from 'react'
 import type { WorkflowStep } from '@lemon/shared'
 import TicketView from '../components/TicketView.tsx'
 
-const steps: WorkflowStep[] = ['spec', 'plan', 'tasks', 'implement']
-
-function getEffectiveStep(status: string, data: any): WorkflowStep {
-  if (steps.includes(status as WorkflowStep)) {
-    return status as WorkflowStep
-  }
-  if (status === 'done') return 'implement'
-  if (data.implementation?.content) return 'implement'
-  if (data.tasks?.length) return 'tasks'
-  if (data.plan?.content) return 'plan'
-  if (data.spec?.content) return 'spec'
-  return 'spec'
-}
+const steps: WorkflowStep[] = ['spec', 'plan', 'tasks']
 
 export interface TicketContainerProps {
   workspaceId: string
@@ -33,12 +21,13 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
     enabled: !!workspaceId && !!ticketId,
   })
 
-  const effectiveStep = !isLoading && data ? getEffectiveStep(data.ticket.status, data) : 'spec'
+  const effectiveStep = (!isLoading && data?.ticket?.effectiveStep) || 'spec'
   const [activeTab, setActiveTab] = useState<WorkflowStep | null>(null)
-  const [chatOpen, setChatOpen] = useState(false)
-  const [chatInput, setChatInput] = useState('')
-  const [chatHistory, setChatHistory] = useState<Array<{ role: string; content: string }>>([])
-  const [lastResponse, setLastResponse] = useState('')
+  const [expandedTab, setExpandedTab] = useState<WorkflowStep | null>(null)
+  const [actionError, setActionError] = useState<string>('')
+
+  type ChatTurn = { user: string; assistant?: string; status: 'fetching' | 'responded' | 'failed'; error?: string }
+  const [chatTurns, setChatTurns] = useState<ChatTurn[]>([])
 
   useEffect(() => {
     if (activeTab === null && !isLoading && data) {
@@ -51,58 +40,99 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
     }
   }, [activeTab, isLoading, data, searchParams, effectiveStep])
 
-  const advance = useMutation({
-    mutationFn: () => api.advanceTicket(workspaceId, ticketId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ticketDetails', workspaceId, ticketId] })
-      queryClient.invalidateQueries({ queryKey: ['tickets'] })
-    },
-  })
-
-  const queue = useMutation({
-    mutationFn: () => api.queueTicket(workspaceId, ticketId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ticketDetails', workspaceId, ticketId] })
-      queryClient.invalidateQueries({ queryKey: ['tickets'] })
-    },
-  })
+  // Load persisted thread when tab changes
+  useEffect(() => {
+    if (!activeTab || !workspaceId || !ticketId) return
+    api.getTicketThread(workspaceId, ticketId, activeTab)
+      .then((res) => {
+        const turns: ChatTurn[] = []
+        for (let i = 0; i < res.thread.length; i++) {
+          const m = res.thread[i]
+          if (m.role === 'user') {
+            const next = res.thread[i + 1]
+            turns.push({
+              user: m.content,
+              assistant: next?.role === 'assistant' ? next.content : undefined,
+              status: next?.role === 'assistant' ? 'responded' : 'fetching',
+            })
+            if (next?.role === 'assistant') i++
+          }
+        }
+        setChatTurns(turns)
+      })
+      .catch(() => {
+        setChatTurns([])
+      })
+  }, [workspaceId, ticketId, activeTab])
 
   const run = useMutation({
     mutationFn: () => api.runTicket(workspaceId, ticketId),
     onSuccess: () => {
+      setActionError('')
       setTimeout(() => {
         refetch()
         queryClient.invalidateQueries({ queryKey: ['tickets'] })
       }, 1000)
     },
-  })
-
-  const chat = useMutation({
-    mutationFn: (messages: any[]) =>
-      api.chatTicket(workspaceId, ticketId, { step: activeTab ?? 'spec', messages }),
-    onSuccess: (res) => {
-      setLastResponse(res.content)
-      setChatHistory((prev) => [...prev, { role: 'assistant', content: res.content }])
+    onError: (err: any) => {
+      setActionError(err?.message || 'Run failed')
+      refetch()
+      queryClient.invalidateQueries({ queryKey: ['tickets'] })
     },
   })
 
-  const saveSpec = useMutation({
-    mutationFn: (content: string) => api.saveSpec(workspaceId, ticketId, content),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['ticketDetails', workspaceId, ticketId] }),
+  const approve = useMutation({
+    mutationFn: () => api.approveTicket(workspaceId, ticketId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ticketDetails', workspaceId, ticketId] })
+      queryClient.invalidateQueries({ queryKey: ['tickets'] })
+    },
   })
 
-  const savePlan = useMutation({
-    mutationFn: (content: string) => api.savePlan(workspaceId, ticketId, content),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['ticketDetails', workspaceId, ticketId] }),
+  const updateTitle = useMutation({
+    mutationFn: (title: string) => api.updateTicket(workspaceId, ticketId, { title }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ticketDetails', workspaceId, ticketId] })
+      queryClient.invalidateQueries({ queryKey: ['tickets'] })
+    },
   })
 
-  const handleChat = () => {
-    if (!chatInput.trim()) return
-    const next = [...chatHistory, { role: 'user', content: chatInput }]
-    setChatHistory(next)
-    chat.mutate(next)
-    setChatInput('')
+
+  const chat = useMutation({
+    mutationFn: (message: string) =>
+      api.chatTicket(workspaceId, ticketId, { step: activeTab ?? 'spec', messages: [{ role: 'user', content: message }], revise: true }),
+    onSuccess: (res) => {
+      setChatTurns((prev) => {
+        const next = [...prev]
+        const last = next[next.length - 1]
+        if (last) {
+          last.assistant = res.content
+          last.status = 'responded'
+        }
+        return next
+      })
+      refetch()
+      queryClient.invalidateQueries({ queryKey: ['ticketDetails', workspaceId, ticketId] })
+    },
+    onError: (err: any) => {
+      setChatTurns((prev) => {
+        const next = [...prev]
+        const last = next[next.length - 1]
+        if (last) {
+          last.status = 'failed'
+          last.error = err?.message || 'Failed to revise'
+        }
+        return next
+      })
+    },
+  })
+
+  const handleSendChat = (message: string) => {
+    const nextTurns: ChatTurn[] = [...chatTurns, { user: message, status: 'fetching' }]
+    setChatTurns(nextTurns)
+    chat.mutate(message)
   }
+
 
   const handleSetTab = (step: WorkflowStep) => {
     setActiveTab(step)
@@ -126,19 +156,18 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
       implementation={data.implementation}
       activeTab={activeTab ?? effectiveStep}
       effectiveStep={effectiveStep}
-      chatOpen={chatOpen}
-      setChatOpen={setChatOpen}
-      chatInput={chatInput}
-      setChatInput={setChatInput}
-      chatHistory={chatHistory}
-      lastResponse={lastResponse}
-      onChat={handleChat}
-      onAdvance={() => advance.mutate()}
-      onQueue={() => queue.mutate()}
+      errorMessage={data.ticket?.errorMessage || actionError}
+      isRunning={run.isPending}
+      isChatPending={chat.isPending}
+      chatTurns={chatTurns}
       onRun={() => run.mutate()}
-      onSaveSpec={(content) => saveSpec.mutate(content)}
-      onSavePlan={(content) => savePlan.mutate(content)}
       onSetTab={handleSetTab}
+      onDismissError={() => setActionError('')}
+      expandedTab={expandedTab}
+      setExpandedTab={setExpandedTab}
+      onApprove={() => approve.mutate()}
+      onSendChat={handleSendChat}
+      onUpdateTitle={(title) => updateTitle.mutate(title)}
     />
   )
 }

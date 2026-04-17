@@ -85,7 +85,7 @@ async function runChatLoop<T = string>(
   const title = details.ticket.title;
 
   console.log(`Entering ${step} conversation mode for ticket "${title}"`);
-  console.log("Type your message to refine. Commands: [save] to store, [done] to save & advance, [exit] to quit without saving.");
+  console.log("Type your message to refine. Commands: [save] to store, [done] to save & advance, [back] to step back, [exit] to quit without saving.");
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -97,12 +97,17 @@ async function runChatLoop<T = string>(
   const ticketLine = details.ticket.description?.trim()
     ? `Ticket: ${title}\nDescription: ${details.ticket.description}`
     : `Ticket: ${title}`;
-  const messages: ChatMessage[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: initialUserPrompt.replace("{{title}}", ticketLine) },
-  ];
 
-  let lastResponse = "";
+  const threadRes = await client.getTicketThread(workspaceId, ticketId, step);
+  let messages: ChatMessage[] = threadRes.thread.map((m) => ({ role: m.role as any, content: m.content }));
+  if (messages.length === 0) {
+    messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: initialUserPrompt.replace("{{title}}", ticketLine) },
+    ];
+  }
+
+  let lastResponse = messages.filter((m) => m.role === "assistant").pop()?.content || "";
 
   while (true) {
     const input = await ask();
@@ -131,10 +136,17 @@ async function runChatLoop<T = string>(
       return;
     }
 
+    if (trimmed === "back") {
+      const result = await client.stepBackTicket(workspaceId, ticketId);
+      rl.close();
+      console.log(`Ticket stepped back to:`, result.newStatus);
+      return;
+    }
+
     messages.push({ role: "user", content: input });
 
     try {
-      const res = await client.chatTicket(workspaceId, ticketId, { step, messages });
+      const res = await client.chatTicket(workspaceId, ticketId, { step, messages: [{ role: "user", content: input }] });
       lastResponse = res.content;
       console.log(`\n[${res.model}]\n${res.content}\n`);
       messages.push({ role: "assistant", content: res.content });
@@ -218,15 +230,8 @@ export async function ticketImplement(
   workspaceId: string,
   ticketId: string
 ) {
-  await runChatLoop(
-    client,
-    workspaceId,
-    ticketId,
-    "implement",
-    "You are a senior engineer. Given tasks, describe the implementation approach, key code changes, and file names in markdown. Ask clarifying questions if needed.",
-    "Ticket title: {{title}}\n\nPlease help me write the implementation details for this ticket.",
-    client.saveImplementation.bind(client)
-  );
+  const result = await client.approveTicket(workspaceId, ticketId);
+  console.log("Ticket approved. Execution started. New status:", result.newStatus);
 }
 
 export async function ticketAdvance(

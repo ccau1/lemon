@@ -94,6 +94,13 @@ export const settingsSchema = z.object({
     implement: z.string().optional(),
     done: z.string().optional(),
   }).default({}),
+  prompts: z.object({
+    spec: z.string().optional(),
+    plan: z.string().optional(),
+    tasks: z.string().optional(),
+    implement: z.string().optional(),
+    done: z.string().optional(),
+  }).default({}),
   parallelConcurrency: z.number().default(3),
   contextGlobs: z.union([
     z.array(z.string()),

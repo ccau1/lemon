@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { tickets, specs, plans, tasks, implementations } from "../db/schema.js";
 import type { DB } from "../db/index.js";
 import type { WorkspaceRegistry } from "../config/workspace-registry.js";
+import type { WorkflowEngine } from "../services/workflow.js";
 
 const createSchema = z.object({
   projectId: z.string(),
@@ -19,24 +20,35 @@ async function enrichTicket(
 ) {
   let effectiveStep = t.status;
   if (t.status === "awaiting_review" || t.status === "queued" || t.status === "error") {
-    const [specRows, planRows, taskRows, implRows] = await Promise.all([
-      db.select().from(specs).where(eq(specs.ticketId, t.id)),
-      db.select().from(plans).where(eq(plans.ticketId, t.id)),
-      db.select().from(tasks).where(eq(tasks.ticketId, t.id)),
-      db.select().from(implementations).where(eq(implementations.ticketId, t.id)),
-    ]);
-    if (implRows.length) effectiveStep = "done";
-    else if (taskRows.length) effectiveStep = "implement";
-    else if (planRows.length) effectiveStep = "tasks";
-    else if (specRows.length) effectiveStep = "plan";
-    else effectiveStep = "spec";
+    if (t.status === "error" && t.errorStep) {
+      effectiveStep = t.errorStep;
+    } else {
+      const [specRows, planRows, taskRows, implRows] = await Promise.all([
+        db.select().from(specs).where(eq(specs.ticketId, t.id)),
+        db.select().from(plans).where(eq(plans.ticketId, t.id)),
+        db.select().from(tasks).where(eq(tasks.ticketId, t.id)),
+        db.select().from(implementations).where(eq(implementations.ticketId, t.id)),
+      ]);
+      const hasImpl = implRows.some((r) => !r.outdated);
+      const hasTasks = taskRows.some((r) => !r.outdated);
+      const hasPlan = planRows.some((r) => !r.outdated);
+      const hasSpec = specRows.length > 0;
+      if (hasImpl) effectiveStep = "tasks";
+      else if (hasTasks) effectiveStep = "tasks";
+      else if (hasPlan) effectiveStep = "plan";
+      else if (hasSpec) effectiveStep = "spec";
+      else effectiveStep = "spec";
+    }
+  }
+  if (effectiveStep === "implement" || effectiveStep === "done") {
+    effectiveStep = "tasks";
   }
   return { ...t, workspaceId, workspaceName, effectiveStep };
 }
 
 export async function ticketRoutes(
   fastify: FastifyInstance,
-  { getDb, registry }: { getDb: (workspaceId: string) => DB; registry: WorkspaceRegistry }
+  { getDb, registry, engine }: { getDb: (workspaceId: string) => DB; registry: WorkspaceRegistry; engine: WorkflowEngine }
 ) {
   fastify.get("/tickets", async (request) => {
     const { workspaceId, projectId } = request.query as {
@@ -71,6 +83,7 @@ export async function ticketRoutes(
       createdAt: now,
       updatedAt: now,
     });
+    engine.runTicket(workspaceId, id).catch(() => {});
     return { id, projectId: body.projectId, title: body.title, description: body.description, status: "spec", createdAt: now, updatedAt: now };
   });
 
@@ -107,14 +120,34 @@ export async function ticketRoutes(
     if (!ticket) return reply.status(404).send({ error: "Ticket not found" });
 
     const [specRows, planRows, taskRows, implRows] = await Promise.all([
-      db.select().from(specs).where(eq(specs.ticketId, id)),
-      db.select().from(plans).where(eq(plans.ticketId, id)),
+      db.select().from(specs).where(eq(specs.ticketId, id)).orderBy(desc(specs.createdAt)),
+      db.select().from(plans).where(eq(plans.ticketId, id)).orderBy(desc(plans.createdAt)),
       db.select().from(tasks).where(eq(tasks.ticketId, id)),
       db.select().from(implementations).where(eq(implementations.ticketId, id)),
     ]);
 
+    let effectiveStep = ticket.status;
+    if (ticket.status === "awaiting_review" || ticket.status === "queued" || ticket.status === "error") {
+      if (ticket.status === "error" && ticket.errorStep) {
+        effectiveStep = ticket.errorStep;
+      } else {
+        const hasImpl = implRows.some((r) => !r.outdated);
+        const hasTasks = taskRows.some((r) => !r.outdated);
+        const hasPlan = planRows.some((r) => !r.outdated);
+        const hasSpec = specRows.length > 0;
+        if (hasImpl) effectiveStep = "tasks";
+        else if (hasTasks) effectiveStep = "tasks";
+        else if (hasPlan) effectiveStep = "plan";
+        else if (hasSpec) effectiveStep = "spec";
+        else effectiveStep = "spec";
+      }
+    }
+    if (effectiveStep === "implement" || effectiveStep === "done") {
+      effectiveStep = "tasks";
+    }
+
     return {
-      ticket,
+      ticket: { ...ticket, effectiveStep },
       spec: specRows[0] ?? null,
       plan: planRows[0] ?? null,
       tasks: taskRows,

@@ -38,10 +38,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  updateTicket: (workspaceId: string, ticketId: string, body: { title?: string; description?: string }) =>
+    fetchJson(`/api/tickets/${ticketId}?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   getTicketDetails: (workspaceId: string, ticketId: string) =>
     fetchJson(`/api/tickets/${ticketId}/details?workspaceId=${encodeURIComponent(workspaceId)}`),
   advanceTicket: (workspaceId: string, ticketId: string) =>
     fetchJson(`/api/tickets/${ticketId}/advance?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  stepBackTicket: (workspaceId: string, ticketId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/back?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "POST",
       body: JSON.stringify({}),
     }),
@@ -55,6 +65,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
+  approveTicket: (workspaceId: string, ticketId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/approve?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  rejectTicket: (workspaceId: string, ticketId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/reject?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
   saveSpec: (workspaceId: string, ticketId: string, content: string) =>
     fetchJson(`/api/tickets/${ticketId}/spec?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "POST",
@@ -65,13 +85,25 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ content }),
     }),
-  saveTasks: (workspaceId: string, ticketId: string, tasks: Array<{ description: string; done: boolean }>) =>
+  saveTasks: (workspaceId: string, ticketId: string, tasks: Array<{ description: string; done: boolean; comment?: string }>) =>
     fetchJson(`/api/tickets/${ticketId}/tasks?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "POST",
       body: JSON.stringify({ tasks }),
     }),
-  chatTicket: (workspaceId: string, ticketId: string, body: { step: string; messages: any[] }) =>
+  getTicketThread: (workspaceId: string, ticketId: string, step: string) =>
+    fetchJson(`/api/tickets/${ticketId}/thread?workspaceId=${encodeURIComponent(workspaceId)}&step=${encodeURIComponent(step)}`),
+  chatTicket: (workspaceId: string, ticketId: string, body: { step: string; messages: any[]; revise?: boolean }) =>
     fetchJson(`/api/tickets/${ticketId}/chat?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }) as Promise<{ content: string; model: string; thread: Array<{ role: string; content: string }> }>,
+  chatTicketSection: (workspaceId: string, ticketId: string, body: { step: string; fullContent: string; sectionContent: string; messages: any[] }) =>
+    fetchJson(`/api/tickets/${ticketId}/chat-section?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  chatTask: (workspaceId: string, ticketId: string, body: { taskId: string; taskDescription: string; messages: any[] }) =>
+    fetchJson(`/api/tickets/${ticketId}/chat-task?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "POST",
       body: JSON.stringify(body),
     }),

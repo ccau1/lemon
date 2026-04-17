@@ -58,7 +58,7 @@ export default function ResizablePanels({
 
   return (
     <div ref={containerRef} className={`flex ${className}`}>
-      <div style={{ width: leftWidth }} className="overflow-auto">
+      <div style={{ width: leftWidth }} className="overflow-auto p-1">
         {left}
       </div>
       <div

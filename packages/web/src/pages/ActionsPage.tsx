@@ -79,10 +79,8 @@ export default function ActionsPage() {
   useEffect(() => {
     if (selectedWorkspaceId !== 'all') {
       setRunFilterWorkspaceId(selectedWorkspaceId)
-    } else {
-      setRunFilterWorkspaceId(defaultWorkspaceIdForAction)
     }
-  }, [selectedWorkspaceId, defaultWorkspaceIdForAction])
+  }, [selectedWorkspaceId])
 
   const { data: runs, isLoading: runsLoading } = useQuery({
     queryKey: ['actionRuns', selectedAction, runFilterWorkspaceId],
@@ -97,24 +95,15 @@ export default function ActionsPage() {
   const [optimisticRuns, setOptimisticRuns] = useState<Array<any>>([])
   const [selectedRun, setSelectedRun] = useState<any | null>(null)
 
-  const [showRunForm, setShowRunForm] = useState(false)
-  const [runFormWorkspaceId, setRunFormWorkspaceId] = useState<string>('')
-
-  useEffect(() => {
-    if (selectedWorkspaceId !== 'all') {
-      setRunFormWorkspaceId(selectedWorkspaceId)
-    } else {
-      setRunFormWorkspaceId(defaultWorkspaceIdForAction)
-    }
-  }, [selectedWorkspaceId, defaultWorkspaceIdForAction])
+  const runWorkspaceId = runFilterWorkspaceId || defaultWorkspaceIdForAction
 
   const runMutation = useMutation({
-    mutationFn: () => api.runAction({ workspaceId: runFormWorkspaceId, actionName: selectedAction }),
+    mutationFn: () => api.runAction({ workspaceId: runWorkspaceId, actionName: selectedAction }),
     onMutate: async () => {
       const tempId = `temp-${Math.random().toString(36).slice(2)}`
       const tempRun = {
         id: tempId,
-        workspaceId: runFormWorkspaceId,
+        workspaceId: runWorkspaceId,
         actionName: selectedAction,
         status: 'pending',
         response: '',
@@ -125,7 +114,6 @@ export default function ActionsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['actionRuns', selectedAction] })
-      setShowRunForm(false)
     },
     onError: (_err, _vars, context) => {
       if (context?.tempId) {
@@ -197,44 +185,21 @@ export default function ActionsPage() {
               {selectedWorkspaceId === 'all' && (
                 <DropdownSelect
                   className="w-auto"
-                  options={(workspaces || []).map((w: any) => ({ value: w.id, label: w.name }))}
+                  options={[{ value: '', label: 'All workspaces' }, ...(workspaces || []).map((w: any) => ({ value: w.id, label: w.name }))]}
                   value={runFilterWorkspaceId}
                   onChange={setRunFilterWorkspaceId}
                 />
               )}
               <button
                 className="bg-indigo-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
-                onClick={() => setShowRunForm((v) => !v)}
+                disabled={!runWorkspaceId || runMutation.isPending}
+                onClick={() => runMutation.mutate()}
               >
-                {showRunForm ? 'Cancel' : 'Run action'}
+                {runMutation.isPending ? 'Running...' : 'Run action'}
               </button>
             </div>
           </div>
 
-          {showRunForm && (
-            <div className="bg-gray-50 border rounded p-3 mb-4">
-              {selectedWorkspaceId === 'all' && (
-                <div className="mb-3">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Workspace</label>
-                  <DropdownSelect
-                    className="w-full max-w-xs"
-                    options={(workspaces || []).map((w: any) => ({ value: w.id, label: w.name }))}
-                    value={runFormWorkspaceId}
-                    onChange={setRunFormWorkspaceId}
-                  />
-                </div>
-              )}
-              <div className="flex justify-end">
-                <button
-                  className="bg-indigo-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
-                  disabled={!runFormWorkspaceId || runMutation.isPending}
-                  onClick={() => runMutation.mutate()}
-                >
-                  {runMutation.isPending ? 'Running...' : 'Run'}
-                </button>
-              </div>
-            </div>
-          )}
 
           <div className="overflow-auto flex-1 min-h-0">{RunsList}</div>
         </div>
@@ -256,7 +221,7 @@ export default function ActionsPage() {
           <input
             type="text"
             placeholder="Search actions..."
-            className="w-full border px-3 py-2 rounded text-sm"
+            className="w-full px-3 py-2 rounded text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -285,7 +250,7 @@ export default function ActionsPage() {
                 <input
                   type="text"
                   placeholder="Search actions..."
-                  className="w-full border px-3 py-2 rounded text-sm mb-2"
+                  className="w-full px-3 py-2 rounded text-sm mb-2 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />

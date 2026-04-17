@@ -1,10 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import { api } from '../api.ts'
 import { useSelectedWorkspace } from '../WorkspaceContext.tsx'
 import { useEffect, useMemo, useState } from 'react'
 import TicketModal from '../components/TicketModal.tsx'
 import { DropdownFilter, DropdownSelect } from '../components/Dropdown.tsx'
+import { formatStatus } from '../utils.ts'
 
 const stepOrder = ['spec', 'plan', 'tasks', 'implement', 'done'] as const
 const metaStatuses = ['active', 'awaiting_review', 'queued', 'error'] as const
@@ -247,7 +248,32 @@ export default function TicketsBoardPage() {
   const workspaceOptions = useMemo(() => (workspaces || []).map((w: any) => ({ value: w.id, label: w.name })), [workspaces])
   const projectOptions = useMemo(() => (modalProjects || []).map((p: any) => ({ value: p.id, label: p.name })), [modalProjects])
   const stepOptions = stepOrder.map((s) => ({ value: s, label: s }))
-  const statusOptions = metaStatuses.map((s) => ({ value: s, label: s.replace('_', ' ') }))
+  const statusOptions = metaStatuses.map((s) => ({ value: s, label: formatStatus(s) }))
+
+  if (workspaces && workspaces.length === 0) {
+    return (
+      <div className="max-w-7xl mx-auto min-h-[60vh] flex items-center justify-center">
+        <div className="flex flex-col items-center justify-center text-center py-20 px-4">
+          <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
+            <svg className="w-10 h-10 text-indigo-500" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5M4.5 21V10.5a2.25 2.25 0 012.25-2.25h11.25a2.25 2.25 0 012.25 2.25V21m-9-6h4.5m-13.5-3h19.5M6.75 8.25V6a2.25 2.25 0 012.25-2.25h6.75A2.25 2.25 0 0118 6v2.25" />
+            </svg>
+          </div>
+          <h2 className="text-3xl font-bold text-gray-900 mb-3">No workspaces yet</h2>
+          <p className="text-lg text-gray-600 mb-8 max-w-md">Create a workspace to start organizing and tracking your tickets.</p>
+          <Link
+            to="/workspace"
+            className="inline-flex items-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-lg text-lg font-medium hover:bg-indigo-700 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Create workspace
+          </Link>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -335,15 +361,17 @@ export default function TicketsBoardPage() {
               <button className="text-gray-500 hover:text-gray-800" onClick={() => setShowModal(false)}>Close</button>
             </div>
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Workspace</label>
-                <DropdownSelect
-                  className="w-full"
-                  options={workspaceOptions}
-                  value={modalWorkspaceId}
-                  onChange={(value) => setModalWorkspaceId(value)}
-                />
-              </div>
+              {selectedWorkspaceId === 'all' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Workspace</label>
+                  <DropdownSelect
+                    className="w-full"
+                    options={workspaceOptions}
+                    value={modalWorkspaceId}
+                    onChange={(value) => setModalWorkspaceId(value)}
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
                 <DropdownSelect
@@ -437,7 +465,7 @@ function ListView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; wor
             <div className="col-span-2 text-sm capitalize">{t.effectiveStep}</div>
             <div className="col-span-2">
               <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status)}`}>
-                {t.status.replace('_', ' ')}
+                {formatStatus(t.status)}
               </span>
             </div>
             <div className="col-span-1 text-right">
@@ -463,7 +491,7 @@ function CardsView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; wo
           <div className="flex items-center justify-between">
             <span className="text-xs text-gray-500 truncate">{workspaceMap.get(t.workspaceId) || t.workspaceName || 'Unknown'}</span>
             <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status)}`}>
-              {t.status.replace('_', ' ')}
+              {formatStatus(t.status)}
             </span>
           </div>
           <div className="mt-2 text-xs text-gray-400 capitalize">{t.effectiveStep}</div>
@@ -483,7 +511,7 @@ function TicketCard({ t, workspaceMap, onClick }: { t: any; workspaceMap: Map<st
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-gray-500 truncate">{workspaceMap.get(t.workspaceId) || t.workspaceName || 'Unknown'}</span>
         <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status)}`}>
-          {t.status.replace('_', ' ')}
+          {formatStatus(t.status)}
         </span>
       </div>
     </div>

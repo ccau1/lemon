@@ -254,7 +254,7 @@ function ModelWizard({
               placeholder="Search providers..."
               value={providerSearch}
               onChange={(e) => setProviderSearch(e.target.value)}
-              className="w-full border border-gray-300 px-3 py-2 rounded"
+              className="w-full border border-gray-300 px-3 py-2 rounded bg-white text-gray-900"
             />
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {Object.entries(PROVIDER_LABELS)
@@ -363,7 +363,7 @@ function ModelWizard({
                 Name
               </label>
               <input
-                className={`border px-3 py-2 rounded w-full ${
+                className={`border px-3 py-2 rounded w-full bg-white text-gray-900 ${
                   error ? 'border-red-500' : 'border-gray-300'
                 }`}
                 value={name}
@@ -381,7 +381,7 @@ function ModelWizard({
                   </label>
                   <input
                     type="password"
-                    className="border px-3 py-2 rounded w-full border-gray-300"
+                    className="border px-3 py-2 rounded w-full border-gray-300 bg-white text-gray-900"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                     placeholder="sk-..."
@@ -393,7 +393,7 @@ function ModelWizard({
                       Base URL
                     </label>
                     <input
-                      className="border px-3 py-2 rounded w-full border-gray-300"
+                      className="border px-3 py-2 rounded w-full border-gray-300 bg-white text-gray-900"
                       value={baseUrl}
                       onChange={(e) => setBaseUrl(e.target.value)}
                       placeholder="https://api.example.com/v1"
@@ -409,7 +409,7 @@ function ModelWizard({
               <input
                 type="number"
                 step="0.1"
-                className="border px-3 py-2 rounded w-full border-gray-300"
+                className="border px-3 py-2 rounded w-full border-gray-300 bg-white text-gray-900"
                 value={temperature}
                 onChange={(e) => setTemperature(e.target.value)}
               />

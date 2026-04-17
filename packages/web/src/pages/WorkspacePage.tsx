@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { api } from '../api.ts'
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { DropdownSelect, DropdownFilter } from '../components/Dropdown.tsx'
+import { formatStatus } from '../utils.ts'
 
 const LS_KEY = 'ticket_form'
 
@@ -116,6 +117,7 @@ export default function WorkspacePage() {
   const [localConcurrency, setLocalConcurrency] = useState<string>('')
   const [localStepGlobs, setLocalStepGlobs] = useState<Record<string, string>>({})
   const [localDefaultModels, setLocalDefaultModels] = useState<Record<string, string>>({})
+  const [localPrompts, setLocalPrompts] = useState<Record<string, string>>({})
 
   const projectHydrated = useRef(false)
   const skipNextProjectPersist = useRef(false)
@@ -165,6 +167,7 @@ export default function WorkspacePage() {
     setLocalAutoApprove(rawConfig.autoApprove || {})
     setLocalConcurrency(rawConfig.parallelConcurrency !== undefined ? String(rawConfig.parallelConcurrency) : '')
     setLocalDefaultModels(rawConfig.defaultModels || {})
+    setLocalPrompts((rawConfig.prompts as Record<string, string>) || {})
 
     const next: Record<string, string> = {}
     const rawGlobs = rawConfig.contextGlobs
@@ -208,6 +211,11 @@ export default function WorkspacePage() {
     return (g as Record<string, string[]>)?.[key]?.join('\n') || ''
   }
 
+  const getGlobalPromptPlaceholder = (step: string) => {
+    if (!globalConfig) return ''
+    return (globalConfig.prompts as Record<string, string>)?.[step] || ''
+  }
+
   const saveConfig = useMutation({
     mutationFn: async () => {
       if (!workspaceId) return
@@ -247,6 +255,20 @@ export default function WorkspacePage() {
       })
       if (hasDefaultModelChanges || Object.keys(nextDefaultModels).length !== Object.keys(rawConfig?.defaultModels || {}).length) {
         promises.push(api.setConfig({ key: 'defaultModels', value: nextDefaultModels, workspaceId }))
+      }
+
+      const nextPrompts: Record<string, string> = {}
+      steps.filter((s) => s !== 'done').forEach((step) => {
+        const val = localPrompts[step]?.trim()
+        if (val) nextPrompts[step] = val
+      })
+      const hasPromptChanges = steps.filter((s) => s !== 'done').some((step) => {
+        const rawVal = rawConfig?.prompts?.[step]
+        const newVal = nextPrompts[step]
+        return rawVal !== newVal && (rawVal !== undefined || newVal !== undefined)
+      })
+      if (hasPromptChanges || Object.keys(nextPrompts).length !== Object.keys(rawConfig?.prompts || {}).length) {
+        promises.push(api.setConfig({ key: 'prompts', value: nextPrompts, workspaceId }))
       }
 
       await Promise.all(promises)
@@ -419,7 +441,7 @@ export default function WorkspacePage() {
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <DropdownFilter
               label="Status"
-              options={availableStatuses.map((s) => ({ value: s, label: s.replace('_', ' ') }))}
+              options={availableStatuses.map((s) => ({ value: s, label: formatStatus(s) }))}
               selected={selectedStatuses}
               onToggle={(value) => {
                 const next = new Set(selectedStatuses)
@@ -450,7 +472,7 @@ export default function WorkspacePage() {
                 >
                   <div>
                     <div className="text-sm font-medium">{t.title}</div>
-                    <div className="text-xs text-gray-500 uppercase">{t.status.replace('_', ' ')}</div>
+                    <div className="text-xs text-gray-500 uppercase">{formatStatus(t.status)}</div>
                   </div>
                   <span className="text-indigo-600 text-sm">Open →</span>
                 </Link>
@@ -588,7 +610,7 @@ export default function WorkspacePage() {
                     >
                       <div>
                         <div className="text-sm font-medium">{t.title}</div>
-                        <div className="text-xs text-gray-500 uppercase">{t.status}</div>
+                        <div className="text-xs text-gray-500 uppercase">{formatStatus(t.status)}</div>
                       </div>
                       <span className="text-indigo-600 text-sm">Open →</span>
                     </Link>
@@ -737,6 +759,24 @@ export default function WorkspacePage() {
                         value={localStepGlobs[key] || ''}
                         placeholder={getGlobalGlobsPlaceholder(key)}
                         onChange={(e) => setLocalStepGlobs((prev) => ({ ...prev, [key]: e.target.value }))}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold mb-2">Step Prompts</h3>
+                <p className="text-xs text-gray-500 mb-2">Leave empty to inherit global prompts.</p>
+                <div className="space-y-3">
+                  {steps.filter((s) => s !== 'done').map((step) => (
+                    <div key={step}>
+                      <label className="block text-xs font-medium text-gray-600 mb-1 capitalize">{step}</label>
+                      <textarea
+                        className="border border-gray-300 px-3 py-2 rounded w-full h-24 font-mono text-sm"
+                        value={localPrompts[step] || ''}
+                        placeholder={getGlobalPromptPlaceholder(step) || '(use default)'}
+                        onChange={(e) => setLocalPrompts((prev) => ({ ...prev, [step]: e.target.value }))}
                       />
                     </div>
                   ))}

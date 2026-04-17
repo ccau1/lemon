@@ -7,7 +7,7 @@ import { DropdownSelect } from '../components/Dropdown.tsx'
 import ModelsTab from '../components/ModelsTab.tsx'
 
 const steps = ['spec', 'plan', 'tasks', 'implement', 'done'] as const
-const tabs = ['General', 'Workflow', 'Context', 'Actions', 'Models'] as const
+const tabs = ['General', 'Workflow', 'Prompts', 'Context', 'Actions', 'Models'] as const
 
 function normalizeGlobs(raw: string[] | Record<string, string[]> | undefined): Record<string, string[]> {
   if (!raw) return { default: [] }
@@ -202,6 +202,7 @@ export default function SettingsPage() {
   const [concurrency, setConcurrency] = useState(3)
   const [globs, setGlobs] = useState<Record<string, string>>({})
   const [defaultModels, setDefaultModels] = useState<Record<string, string>>({})
+  const [prompts, setPrompts] = useState<Record<string, string>>({})
   const [actions, _setActions] = useState<Record<string, ActionMessage[]>>({})
   const actionsDirty = useRef(false)
   const actionsRef = useRef(actions)
@@ -217,6 +218,7 @@ export default function SettingsPage() {
       setAutoApprove(config.autoApprove || {})
       setConcurrency(config.parallelConcurrency || 3)
       setDefaultModels(config.defaultModels || {})
+      setPrompts((config.prompts as Record<string, string>) || {})
       setActions(config.actions || {})
       actionsDirty.current = false
       const normalized = normalizeGlobs(config.contextGlobs)
@@ -447,7 +449,7 @@ export default function SettingsPage() {
                 <h2 className="font-semibold mb-3">Parallel Concurrency</h2>
                 <input
                   type="number"
-                  className="border px-3 py-2 rounded w-32"
+                  className="border px-3 py-2 rounded w-32 bg-white text-gray-900"
                   value={concurrency}
                   onChange={(e) => {
                     const val = Number(e.target.value)
@@ -456,6 +458,34 @@ export default function SettingsPage() {
                   }}
                 />
               </div>
+            </div>
+          )}
+
+          {activeTab === 'Prompts' && (
+            <div className="bg-white p-4 rounded shadow">
+              <h2 className="font-semibold mb-3">Step Prompts</h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Override system prompts used for each workflow step. Leave blank to use built-in defaults.
+              </p>
+              <div className="space-y-4">
+                {steps.filter((s) => s !== 'done').map((step) => (
+                  <div key={step}>
+                    <label className="text-sm font-medium text-gray-700 capitalize">{step}</label>
+                    <textarea
+                      className="border px-3 py-2 rounded w-full h-32 font-mono text-sm mt-1 bg-white text-gray-900"
+                      value={prompts[step] || ''}
+                      placeholder="(use default)"
+                      onChange={(e) => setPrompts({ ...prompts, [step]: e.target.value })}
+                    />
+                  </div>
+                ))}
+              </div>
+              <button
+                className="mt-4 bg-indigo-600 text-white px-4 py-2 rounded"
+                onClick={() => update.mutate({ key: 'prompts', value: prompts })}
+              >
+                Save Prompts
+              </button>
             </div>
           )}
 
@@ -469,7 +499,7 @@ export default function SettingsPage() {
                 <div>
                   <label className="text-sm font-medium text-gray-700">Default</label>
                   <textarea
-                    className="border px-3 py-2 rounded w-full h-24 font-mono text-sm mt-1"
+                    className="border px-3 py-2 rounded w-full h-24 font-mono text-sm mt-1 bg-white text-gray-900"
                     value={globs.default || ''}
                     onChange={(e) => setGlobs({ ...globs, default: e.target.value })}
                   />
@@ -478,7 +508,7 @@ export default function SettingsPage() {
                   <div key={step}>
                     <label className="text-sm font-medium text-gray-700 capitalize">{step}</label>
                     <textarea
-                      className="border px-3 py-2 rounded w-full h-24 font-mono text-sm mt-1"
+                      className="border px-3 py-2 rounded w-full h-24 font-mono text-sm mt-1 bg-white text-gray-900"
                       value={globs[step] || ''}
                       onChange={(e) => setGlobs({ ...globs, [step]: e.target.value })}
                     />

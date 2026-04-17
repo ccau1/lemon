@@ -72,6 +72,12 @@ export class ApiClient {
     });
   }
 
+  getTicketThread(workspaceId: string, ticketId: string, step: string) {
+    return this.fetch(
+      `/tickets/${ticketId}/thread?workspaceId=${encodeURIComponent(workspaceId)}&step=${encodeURIComponent(step)}`
+    ) as Promise<{ modelId: string; thread: Array<{ role: string; content: string }> }>;
+  }
+
   chatTicket(
     workspaceId: string,
     ticketId: string,
@@ -80,7 +86,7 @@ export class ApiClient {
     return this.fetch(
       `/tickets/${ticketId}/chat?workspaceId=${encodeURIComponent(workspaceId)}`,
       { method: "POST", body: JSON.stringify(body) }
-    ) as Promise<{ content: string; model: string }>;
+    ) as Promise<{ content: string; model: string; thread: Array<{ role: string; content: string }> }>;
   }
 
   saveSpec(workspaceId: string, ticketId: string, content: string) {
@@ -125,6 +131,20 @@ export class ApiClient {
   stepBackTicket(workspaceId: string, ticketId: string) {
     return this.fetch(
       `/tickets/${ticketId}/back?workspaceId=${encodeURIComponent(workspaceId)}`,
+      { method: "POST", body: JSON.stringify({}) }
+    ) as Promise<{ success: boolean; newStatus: string }>;
+  }
+
+  approveTicket(workspaceId: string, ticketId: string) {
+    return this.fetch(
+      `/tickets/${ticketId}/approve?workspaceId=${encodeURIComponent(workspaceId)}`,
+      { method: "POST", body: JSON.stringify({}) }
+    ) as Promise<{ success: boolean; newStatus: string }>;
+  }
+
+  rejectTicket(workspaceId: string, ticketId: string) {
+    return this.fetch(
+      `/tickets/${ticketId}/reject?workspaceId=${encodeURIComponent(workspaceId)}`,
       { method: "POST", body: JSON.stringify({}) }
     ) as Promise<{ success: boolean; newStatus: string }>;
   }

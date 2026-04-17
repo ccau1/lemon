@@ -27,6 +27,8 @@ export interface Ticket {
   title: string;
   description: string;
   status: WorkflowStep | "awaiting_review" | "queued" | "error";
+  errorStep?: string;
+  errorMessage?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -43,6 +45,7 @@ export interface Plan {
   id: string;
   ticketId: string;
   content: string;
+  outdated?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -52,6 +55,11 @@ export interface TaskItem {
   ticketId: string;
   description: string;
   done: boolean;
+  comment?: string;
+  outdated?: boolean;
+  status?: "queued" | "processing" | "done" | "cancelled" | "error";
+  errorMessage?: string;
+  result?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -60,6 +68,7 @@ export interface Implementation {
   id: string;
   ticketId: string;
   content: string;
+  outdated?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -82,10 +91,18 @@ export interface StepModelOverride {
   modelId: string;
 }
 
+export interface SectionChatRequest {
+  step: WorkflowStep;
+  fullContent: string;
+  sectionContent: string;
+  messages: ActionMessage[];
+}
+
 export interface Settings {
   actions: Record<string, ActionMessage[]>;
   autoApprove: Record<WorkflowStep, boolean>;
   defaultModels: Partial<Record<WorkflowStep, string>>;
+  prompts: Partial<Record<WorkflowStep, string>>;
   parallelConcurrency: number;
   contextGlobs: string[] | Record<string, string[]>;
   theme: string;
