@@ -39,7 +39,7 @@ function statusLabel(status: string) {
 export default function RunModal({ run, workspaceName, onClose }: RunModalProps) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div className="bg-white rounded-lg w-full max-w-3xl h-[80vh] flex flex-col overflow-hidden shadow-xl">

@@ -44,13 +44,15 @@ function readLs() {
       projectId?: string
       title?: string
       description?: string
+      externalSource?: string
+      externalSourceId?: string
     }
   } catch {
     return {}
   }
 }
 
-function writeLs(values: { workspaceId?: string; projectId?: string; title?: string; description?: string }) {
+function writeLs(values: { workspaceId?: string; projectId?: string; title?: string; description?: string; externalSource?: string; externalSourceId?: string }) {
   localStorage.setItem(LS_KEY, JSON.stringify(values))
 }
 
@@ -84,6 +86,8 @@ export default function TicketsBoardPage() {
   const [modalProjectId, setModalProjectId] = useState('')
   const [modalTitle, setModalTitle] = useState('')
   const [modalDescription, setModalDescription] = useState('')
+  const [modalExternalSource, setModalExternalSource] = useState<string | undefined>(undefined)
+  const [modalExternalSourceId, setModalExternalSourceId] = useState<string | undefined>(undefined)
 
   const { data: modalProjects } = useQuery({
     queryKey: ['projects', modalWorkspaceId],
@@ -105,6 +109,8 @@ export default function TicketsBoardPage() {
     setModalWorkspaceId(wsId)
     setModalTitle(saved.title || '')
     setModalDescription(saved.description || '')
+    setModalExternalSource(saved.externalSource)
+    setModalExternalSourceId(saved.externalSourceId)
   }, [showModal, workspaces, selectedWorkspaceId])
 
   useEffect(() => {
@@ -119,13 +125,13 @@ export default function TicketsBoardPage() {
 
   useEffect(() => {
     if (!showModal) return
-    writeLs({ workspaceId: modalWorkspaceId, projectId: modalProjectId, title: modalTitle, description: modalDescription })
-  }, [modalWorkspaceId, modalProjectId, modalTitle, modalDescription, showModal])
+    writeLs({ workspaceId: modalWorkspaceId, projectId: modalProjectId, title: modalTitle, description: modalDescription, externalSource: modalExternalSource, externalSourceId: modalExternalSourceId })
+  }, [modalWorkspaceId, modalProjectId, modalTitle, modalDescription, modalExternalSource, modalExternalSourceId, showModal])
 
   const createTicket = useMutation({
     mutationFn: async () => {
       if (!modalWorkspaceId || !modalProjectId || !modalTitle.trim()) throw new Error('Incomplete')
-      return api.createTicket(modalWorkspaceId, { projectId: modalProjectId, title: modalTitle.trim(), description: modalDescription.trim() })
+      return api.createTicket(modalWorkspaceId, { projectId: modalProjectId, title: modalTitle.trim(), description: modalDescription.trim(), externalSource: modalExternalSource, externalSourceId: modalExternalSourceId })
     },
     onSuccess: () => {
       if (selectedWorkspaceId === 'all') {
@@ -141,7 +147,9 @@ export default function TicketsBoardPage() {
       }
       setModalTitle('')
       setModalDescription('')
-      writeLs({ workspaceId: modalWorkspaceId, projectId: modalProjectId, title: '', description: '' })
+      setModalExternalSource(undefined)
+      setModalExternalSourceId(undefined)
+      writeLs({ workspaceId: modalWorkspaceId, projectId: modalProjectId, title: '', description: '', externalSource: undefined, externalSourceId: undefined })
       setShowModal(false)
     },
   })
@@ -381,7 +389,7 @@ export default function TicketsBoardPage() {
 
       {showModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
           onClick={(e) => { if (e.target === e.currentTarget) setShowModal(false) }}
         >
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6">
@@ -432,9 +440,11 @@ export default function TicketsBoardPage() {
               </div>
               <div className="flex items-center justify-between gap-2 pt-2">
                 <IntegrationImportButtons
-                  onImport={({ title: t, description: d }) => {
+                  onImport={({ title: t, description: d, externalSource, externalSourceId }) => {
                     setModalTitle(t)
                     setModalDescription(d)
+                    setModalExternalSource(externalSource)
+                    setModalExternalSourceId(externalSourceId)
                   }}
                 />
                 <div className="flex items-center gap-2">
@@ -497,7 +507,14 @@ function ListView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; wor
             onClick={() => onOpenTicket(t.id)}
             className={`grid grid-cols-12 gap-4 px-4 py-3 items-center cursor-pointer ${t.archivedAt ? 'bg-gray-100 opacity-75' : 'hover:bg-gray-50'}`}
           >
-            <div className="col-span-5 font-medium truncate">{t.title}</div>
+            <div className="col-span-5 font-medium truncate">
+              {t.title}
+              {t.externalSource && (
+                <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase tracking-wide">
+                  {t.externalSource}
+                </span>
+              )}
+            </div>
             <div className="col-span-2 text-sm text-gray-600 truncate">{workspaceMap.get(t.workspaceId) || t.workspaceName || 'Unknown'}</div>
             <div className="col-span-2 text-sm capitalize">{t.effectiveStep}</div>
             <div className="col-span-2">
@@ -525,7 +542,14 @@ function CardsView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; wo
           onClick={() => onOpenTicket(t.id)}
           className={`p-4 rounded shadow block cursor-pointer ${t.archivedAt ? 'bg-gray-100 opacity-75' : 'bg-white hover:shadow-md'}`}
         >
-          <div className="font-medium mb-2">{t.title}</div>
+          <div className="font-medium mb-2">
+            {t.title}
+            {t.externalSource && (
+              <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase tracking-wide align-middle">
+                {t.externalSource}
+              </span>
+            )}
+          </div>
           <div className="flex items-center justify-between">
             <span className="text-xs text-gray-500 truncate">{workspaceMap.get(t.workspaceId) || t.workspaceName || 'Unknown'}</span>
             <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status)}`}>
@@ -546,7 +570,14 @@ function TicketCard({ t, workspaceMap, onClick }: { t: any; workspaceMap: Map<st
       onClick={onClick}
       className={`block p-3 rounded shadow-sm text-sm hover:shadow cursor-pointer ${t.archivedAt ? 'bg-gray-100 opacity-75' : 'bg-white'}`}
     >
-      <div className="font-medium mb-1">{t.title}</div>
+      <div className="font-medium mb-1">
+        {t.title}
+        {t.externalSource && (
+          <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-gray-100 text-gray-600 uppercase tracking-wide align-middle">
+            {t.externalSource}
+          </span>
+        )}
+      </div>
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-gray-500 truncate">{workspaceMap.get(t.workspaceId) || t.workspaceName || 'Unknown'}</span>
         <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status)}`}>

@@ -87,6 +87,7 @@ export class ConfigManager {
       contextGlobs: this.mergeContextGlobs(global.contextGlobs, workspace.contextGlobs),
       theme: workspace.theme ?? global.theme,
       stepModelOverrides: this.mergeStepModelOverrides(global.stepModelOverrides, workspace.stepModelOverrides),
+      triggers: { ...global.triggers, ...workspace.triggers },
     };
   }
 
@@ -128,6 +129,9 @@ export class ConfigManager {
       }
       if (partial.stepModelOverrides !== undefined) {
         result.stepModelOverrides = this.mergeStepModelOverrides(result.stepModelOverrides ?? {}, partial.stepModelOverrides);
+      }
+      if (partial.triggers !== undefined) {
+        result.triggers = { ...result.triggers, ...partial.triggers };
       }
     }
     return result;
@@ -196,6 +200,7 @@ export class ConfigManager {
         ],
       },
       theme: "dark",
+      triggers: {},
     };
   }
 

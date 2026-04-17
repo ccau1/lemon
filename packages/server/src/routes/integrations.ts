@@ -6,7 +6,7 @@ import { integrationRegistry } from "@lemon/shared";
 const integrationTypes = integrationRegistry;
 
 const createSchema = z.object({
-  type: z.enum(["jira", "shortcut"]),
+  type: z.enum(["jira", "shortcut", "trello", "linear"]),
   enabled: z.boolean().default(true),
   name: z.string().min(1),
   config: z.record(z.any()).default({}),

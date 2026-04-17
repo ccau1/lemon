@@ -9,11 +9,13 @@ import { WorkspaceRegistry } from "./config/workspace-registry.js";
 import { ConfigManager } from "./config/settings.js";
 import { ModelRegistry } from "./config/model-registry.js";
 import { IntegrationRegistry } from "./config/integration-registry.js";
+import { resolveDataDir } from "./config/datadir.js";
 import { getWorkspaceDb } from "./db/index.js";
 import { LlmService } from "./services/llm.js";
 import { WorkflowEngine } from "./services/workflow.js";
 import { ActionRunQueue } from "./services/action-run-queue.js";
 import { EventDispatcher } from "./services/event-dispatcher.js";
+import { ActionTriggerService } from "./services/action-trigger.js";
 import type { WorkflowStep } from "@lemon/shared";
 import { migrateArtifactsToFiles } from "./db/migrate-to-files.js";
 
@@ -28,6 +30,7 @@ import { actionRoutes } from "./routes/actions.js";
 import { themeRoutes } from "./routes/themes.js";
 import { docsRoutes } from "./routes/docs.js";
 import { integrationRoutes } from "./routes/integrations.js";
+import { serverInfoRoutes } from "./routes/server-info.js";
 
 export interface ServerOptions {
   port: number;
@@ -80,9 +83,9 @@ export async function startServer(options: ServerOptions) {
 
   const broadcast = (event: string, payload: unknown) => {
     const message = JSON.stringify({ event, payload });
-    for (const conn of connections) {
+    for (const socket of connections) {
       try {
-        conn.socket.send(message);
+        socket.send(message);
       } catch {
         // ignore closed connections
       }
@@ -92,7 +95,19 @@ export async function startServer(options: ServerOptions) {
   const eventDispatcher = new EventDispatcher(integrationRegistry);
   const workflowEngine = new WorkflowEngine(getDb, llmService, configManager, broadcast, workspaceRegistry, eventDispatcher);
   const actionRunQueue = new ActionRunQueue(getDb, llmService, configManager, modelRegistry, workspaceRegistry);
+
+  const actionTriggerService = new ActionTriggerService(
+    getDb,
+    configManager,
+    actionRunQueue,
+    workspaceRegistry,
+    (workspaceId, ticketId) => workflowEngine.resumeTicket(workspaceId, ticketId)
+  );
+  workflowEngine.setActionTriggerService(actionTriggerService);
+  actionRunQueue.setActionTriggerService(actionTriggerService);
+
   await actionRunQueue.recover(workspaceRegistry);
+  await actionTriggerService.recoverTickets();
 
   // Register routes
   await workspaceRoutes(app, { registry: workspaceRegistry, dataDir: options.dataDir });
@@ -106,13 +121,26 @@ export async function startServer(options: ServerOptions) {
   await themeRoutes(app, { dataDir: options.dataDir });
   await docsRoutes(app);
   await integrationRoutes(app, { registry: integrationRegistry });
+  await serverInfoRoutes(app);
+
+  // Health check endpoint
+  app.get("/health", async (_request, reply) => {
+    return reply.send({ status: "ok" });
+  });
+
+  app.get("/api/health", async (_request, reply) => {
+    return reply.send({ status: "ok" });
+  });
 
   // WebSocket gateway for real-time updates
   app.get("/ws", { websocket: true }, (connection: any) => {
-    connections.add(connection);
-    connection.socket.on("close", () => {
-      connections.delete(connection);
+    // Defensive: v11 passes the raw ws socket as `connection`, older versions pass SocketStream with `.socket`
+    const socket = connection.socket || connection;
+    connections.add(socket);
+    socket.on("close", () => {
+      connections.delete(socket);
     });
+    socket.on("error", () => {});
   });
 
   await app.listen({ port: options.port, host: "0.0.0.0" });
@@ -120,8 +148,10 @@ export async function startServer(options: ServerOptions) {
   return app;
 }
 
+export { resolveDataDir } from "./config/datadir.js";
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.PORT || 3000);
-  const dataDir = process.env.DATA_DIR || path.join(os.homedir(), ".lemon");
+  const dataDir = resolveDataDir(process.env.DATA_DIR);
   startServer({ port, dataDir });
 }

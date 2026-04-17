@@ -6,17 +6,20 @@ import './i18n.ts'
 import './index.css'
 import App from './App.tsx'
 import { WorkspaceProvider } from './WorkspaceContext.tsx'
+import { ConnectedProvider } from './ConnectedContext.tsx'
 
 const queryClient = new QueryClient()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <WorkspaceProvider>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </WorkspaceProvider>
+      <ConnectedProvider>
+        <WorkspaceProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </WorkspaceProvider>
+      </ConnectedProvider>
     </QueryClientProvider>
   </StrictMode>,
 )

@@ -6,11 +6,17 @@ export type ThreadMessage = FileThreadMessage;
 export async function getThreadMessages(
   workspacePath: string,
   ticketId: string,
-  modelId?: string
+  modelId?: string,
+  step?: WorkflowStep
 ): Promise<ThreadMessage[]> {
-  const messages = readThread(workspacePath, ticketId);
-  if (!modelId) return messages;
-  return messages.filter((m) => m.modelId === modelId);
+  let messages = readThread(workspacePath, ticketId);
+  if (modelId) {
+    messages = messages.filter((m) => m.modelId === modelId);
+  }
+  if (step) {
+    messages = messages.filter((m) => m.step === step);
+  }
+  return messages;
 }
 
 export async function appendThreadMessages(

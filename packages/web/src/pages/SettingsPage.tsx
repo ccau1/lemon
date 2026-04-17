@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api.ts'
 import { useState, useEffect, useRef } from 'react'
-import { useParams, Link, Navigate } from 'react-router-dom'
+import { useParams, Link, Navigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { ModelConfig, ActionMessage } from '@lemon/shared'
 import { DropdownSelect } from '../components/Dropdown.tsx'
@@ -49,6 +49,134 @@ function XMarkIcon({ className }: { className?: string }) {
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
     </svg>
+  )
+}
+
+function ActionSelector({
+  available,
+  selected,
+  onChange,
+  addLabel,
+  searchPlaceholder,
+  noActionsLabel,
+  noMatchLabel,
+}: {
+  available: string[]
+  selected: string[]
+  onChange: (next: string[]) => void
+  addLabel: string
+  searchPlaceholder: string
+  noActionsLabel: string
+  noMatchLabel: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const filtered = available.filter((a) => a.toLowerCase().includes(query.toLowerCase()))
+  const unselected = available.filter((a) => !selected.includes(a))
+  const canAdd = unselected.length > 0
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="flex flex-wrap items-center gap-2">
+        {selected.map((action) => (
+          <span
+            key={action}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-indigo-50 text-indigo-700 border border-indigo-200"
+          >
+            {action}
+            <button
+              type="button"
+              onClick={() => onChange(selected.filter((s) => s !== action))}
+              className="hover:text-indigo-900"
+              aria-label="Remove"
+            >
+              <XMarkIcon className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+        {canAdd && (
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(true)
+              setQuery('')
+            }}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs border border-gray-300 text-gray-700 hover:bg-gray-50"
+          >
+            <PlusIcon className="w-3 h-3" />
+            {addLabel}
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="absolute z-10 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg p-2">
+          <input
+            type="text"
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={searchPlaceholder}
+            className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mb-2"
+          />
+          <div className="max-h-48 overflow-y-auto space-y-1">
+            {available.length === 0 && (
+              <div className="text-xs text-gray-400 px-1 py-1">{noActionsLabel}</div>
+            )}
+            {available.length > 0 && filtered.length === 0 && (
+              <div className="text-xs text-gray-400 px-1 py-1">{noMatchLabel}</div>
+            )}
+            {filtered.map((action) => {
+              const isSelected = selected.includes(action)
+              return (
+                <button
+                  key={action}
+                  type="button"
+                  onClick={() => {
+                    const next = isSelected
+                      ? selected.filter((s) => s !== action)
+                      : [...selected, action]
+                    onChange(next)
+                  }}
+                  className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center justify-between ${
+                    isSelected ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="truncate">{action}</span>
+                  {isSelected && (
+                    <svg className="w-4 h-4 text-indigo-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+          <div className="flex justify-end pt-2 border-t mt-2">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="px-2 py-1 text-xs text-gray-600 hover:text-gray-900"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -202,17 +330,34 @@ export default function SettingsPage() {
   const { data: models } = useQuery({ queryKey: ['models'], queryFn: api.getModels })
   const { data: themesData } = useQuery({ queryKey: ['themes'], queryFn: api.getThemes })
   const { data: configDefaults } = useQuery({ queryKey: ['configDefaults'], queryFn: api.getConfigDefaults })
+  const { data: serverInfo } = useQuery({ queryKey: ['serverInfo'], queryFn: api.getServerInfo })
 
   const [autoApprove, setAutoApprove] = useState<Record<string, boolean>>({})
   const [concurrency, setConcurrency] = useState(3)
   const [globs, setGlobs] = useState<Record<string, string>>({})
   const [defaultModels, setDefaultModels] = useState<Record<string, string>>({})
   const [prompts, setPrompts] = useState<Record<string, string>>({})
-  const [activeWorkflowStep, setActiveWorkflowStep] = useState<string>(steps[0])
+  const [searchParams, setSearchParams] = useSearchParams()
+  const stepParam = searchParams.get('step')
+  const initialStep = steps.includes(stepParam as any) ? stepParam! : steps[0]
+  const [activeWorkflowStep, setActiveWorkflowStep] = useState<string>(initialStep)
+
+  const setWorkflowStep = (step: string) => {
+    setActiveWorkflowStep(step)
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('step', step)
+      return next
+    }, { replace: true })
+  }
+  const [triggers, setTriggers] = useState<Record<string, string[]>>({})
   const [actions, _setActions] = useState<Record<string, ActionMessage[]>>({})
   const actionsDirty = useRef(false)
   const actionsRef = useRef(actions)
   actionsRef.current = actions
+
+  const [dataDir, setDataDir] = useState('~/.lemon')
+  const [dataDirSaved, setDataDirSaved] = useState(false)
 
   const setActions = (next: Record<string, ActionMessage[]>) => {
     actionsDirty.current = true
@@ -229,6 +374,7 @@ export default function SettingsPage() {
         initPrompts[step] = (config.prompts as Record<string, string>)?.[step] || configDefaults?.prompts?.[step] || ''
       })
       setPrompts(initPrompts)
+      setTriggers(config.triggers || {})
       setActions(config.actions || {})
       actionsDirty.current = false
       const normalized = normalizeGlobs(config.contextGlobs)
@@ -239,6 +385,13 @@ export default function SettingsPage() {
       setGlobs(entries)
     }
   }, [config, configDefaults])
+
+  useEffect(() => {
+    if (serverInfo) {
+      setDataDir(serverInfo.dataDir)
+      setDataDirSaved(false)
+    }
+  }, [serverInfo])
 
   // Debounced auto-save for actions
   useEffect(() => {
@@ -269,6 +422,17 @@ export default function SettingsPage() {
   const setDefaultModel = useMutation({
     mutationFn: ({ step, modelId }: { step: string; modelId: string }) => api.setDefaultModel({ step, modelId }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['config'] }),
+  })
+
+  const setDataDirMutation = useMutation({
+    mutationFn: (dir: string) => api.setDataDir(dir),
+    onSuccess: () => {
+      setDataDirSaved(true)
+      queryClient.invalidateQueries({ queryKey: ['serverInfo'] })
+    },
+    onError: (err: any) => {
+      alert(err?.message || 'Failed to save data directory')
+    },
   })
 
   const handleDefaultModelChange = (step: string, modelId: string) => {
@@ -380,6 +544,67 @@ export default function SettingsPage() {
                   Choose a built-in theme, a theme from ~/.lemon/styles/, or pick Custom file to load a local CSS directly.
                 </p>
               </div>
+
+              <div className="bg-white p-4 rounded shadow">
+                <h2 className="font-semibold mb-3">Data Directory</h2>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      className="border px-3 py-2 rounded w-full text-sm font-mono bg-white text-gray-900"
+                      value={dataDir}
+                      onChange={(e) => {
+                        setDataDir(e.target.value)
+                        setDataDirSaved(false)
+                      }}
+                    />
+                    {typeof window !== 'undefined' && window.electronAPI && (
+                      <button
+                        type="button"
+                        className="px-3 py-2 rounded bg-gray-100 text-sm hover:bg-gray-200"
+                        onClick={async () => {
+                          const dir = await window.electronAPI!.selectFolder()
+                          if (dir) {
+                            setDataDir(dir)
+                            setDataDirSaved(false)
+                          }
+                        }}
+                      >
+                        Browse
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="px-4 py-2 rounded bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-50"
+                      disabled={!dataDir.trim() || setDataDirMutation.isPending}
+                      onClick={() => setDataDirMutation.mutate(dataDir)}
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      className="px-3 py-2 rounded bg-gray-100 text-sm hover:bg-gray-200"
+                      onClick={() => {
+                        setDataDir('~/.lemon')
+                        setDataDirSaved(false)
+                      }}
+                    >
+                      Reset to default
+                    </button>
+                  </div>
+                  {dataDirSaved && (
+                    <p className="text-sm text-amber-600 font-medium">
+                      Restart required for changes to take effect.
+                    </p>
+                  )}
+                  <p className="text-sm text-gray-500">
+                    Directory for global config, models, integrations, and workspace databases.
+                    Defaults to ~/.lemon.
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 
@@ -393,7 +618,7 @@ export default function SettingsPage() {
                     <button
                       key={step}
                       type="button"
-                      onClick={() => setActiveWorkflowStep(step)}
+                      onClick={() => setWorkflowStep(step)}
                       className={`px-3 py-1.5 rounded text-sm capitalize whitespace-nowrap transition-colors ${
                         activeWorkflowStep === step
                           ? 'bg-indigo-50 text-indigo-700 font-medium'
@@ -468,6 +693,31 @@ export default function SettingsPage() {
                           onChange={(e) => setGlobs({ ...globs, [step]: e.target.value })}
                         />
                       </div>
+
+                      {step === 'done' && (
+                        <div className="space-y-3 pt-2 border-t">
+                          <label className="text-sm font-medium text-gray-700">Triggers</label>
+                          <p className="text-xs text-gray-500">{t('workflow.triggersDescription')}</p>
+                          {['preRunDone', 'postRunDone'].map((event) => (
+                            <div key={event} className="border rounded-lg p-3">
+                              <div className="text-sm font-medium text-gray-800 mb-2">{t(`event.${event}`)}</div>
+                              <ActionSelector
+                                available={Object.keys(actions)}
+                                selected={triggers[event] || []}
+                                onChange={(next) => {
+                                  const nextTriggers = { ...triggers, [event]: next }
+                                  setTriggers(nextTriggers)
+                                  update.mutate({ key: 'triggers', value: nextTriggers })
+                                }}
+                                addLabel={t('workflow.addAction')}
+                                searchPlaceholder={t('workflow.searchActions')}
+                                noActionsLabel={t('workflow.noActionsDefined')}
+                                noMatchLabel={t('workflow.noActionsMatch')}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )
                 })()}
@@ -549,6 +799,7 @@ export default function SettingsPage() {
               >
                 Save Workflow
               </button>
+
             </div>
           )}
 

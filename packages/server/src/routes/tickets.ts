@@ -28,8 +28,10 @@ async function enrichTicket(
   workspacePath: string | undefined
 ) {
   let effectiveStep = t.status;
-  if (t.status === "awaiting_review" || t.status === "queued" || t.status === "running" || t.status === "error") {
-    if (t.status === "error") {
+  if (t.status === "awaiting_review" || t.status === "queued" || t.status === "running" || t.status === "awaiting_actions" || t.status === "error") {
+    if (t.currentStep) {
+      effectiveStep = t.currentStep;
+    } else if (t.status === "error") {
       const state = workspacePath ? readTicketState(workspacePath, t.id) : {};
       effectiveStep = state.errorStep ?? (workspacePath ? deriveCurrentStepFromFiles(workspacePath, t.id) : "spec");
     } else if (workspacePath) {
@@ -40,7 +42,8 @@ async function enrichTicket(
     effectiveStep = "tasks";
   }
   const conf = workspacePath ? readTicketConf(workspacePath, t.id) : {};
-  return { ...t, workspaceId, workspaceName, effectiveStep, autoApprove: conf.autoApprove ?? {} };
+  const state = workspacePath ? readTicketState(workspacePath, t.id) : {};
+  return { ...t, workspaceId, workspaceName, effectiveStep, autoApprove: conf.autoApprove ?? {}, errorMessage: state.errorMessage, errorStep: state.errorStep };
 }
 
 export async function ticketRoutes(
@@ -76,6 +79,8 @@ export async function ticketRoutes(
       projectId: z.string(),
       title: z.string().min(1),
       description: z.string(),
+      externalSource: z.string().optional(),
+      externalSourceId: z.string().optional(),
     }).parse(request.body);
     const { workspaceId } = request.query as { workspaceId?: string };
     if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
@@ -88,12 +93,14 @@ export async function ticketRoutes(
       title: body.title,
       description: body.description,
       status: "spec",
+      externalSource: body.externalSource,
+      externalSourceId: body.externalSourceId,
       createdAt: now,
       updatedAt: now,
     });
     await dispatcher?.dispatch("ticketCreated", { workspaceId, ticketId: id, step: "spec" });
     engine.runTicket(workspaceId, id).catch(() => {});
-    return { id, projectId: body.projectId, title: body.title, description: body.description, status: "spec", createdAt: now, updatedAt: now };
+    return { id, projectId: body.projectId, title: body.title, description: body.description, status: "spec", externalSource: body.externalSource, externalSourceId: body.externalSourceId, createdAt: now, updatedAt: now };
   });
 
   fastify.get("/tickets/:id", async (request, reply) => {
@@ -137,22 +144,9 @@ export async function ticketRoutes(
     const taskList = ws ? readTasks(ws.path, id) : null;
     const implementation = ws ? readImplement(ws.path, id) : null;
 
-    let effectiveStep = ticket.status;
-    if (ticket.status === "awaiting_review" || ticket.status === "queued" || ticket.status === "running" || ticket.status === "error") {
-      if (ticket.status === "error") {
-        const state = ws ? readTicketState(ws.path, id) : {};
-        effectiveStep = state.errorStep ?? (ws ? deriveCurrentStepFromFiles(ws.path, id) : "spec");
-      } else if (ws) {
-        effectiveStep = deriveCurrentStepFromFiles(ws.path, id);
-      }
-    }
-    if (effectiveStep === "implement" || effectiveStep === "done") {
-      effectiveStep = "tasks";
-    }
-
-    const conf = ws ? readTicketConf(ws.path, id) : {};
+    const enriched = await enrichTicket(db, ticket, workspaceId, ws?.name || workspaceId, ws?.path);
     return {
-      ticket: { ...ticket, effectiveStep, autoApprove: conf.autoApprove ?? {} },
+      ticket: enriched,
       spec: spec ? { content: spec } : null,
       plan: plan ? { content: plan } : null,
       tasks: taskList ?? [],

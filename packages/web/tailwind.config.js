@@ -8,7 +8,7 @@ export default {
     extend: {
       colors: {
         white: 'var(--white)',
-        black: 'var(--black)',
+        black: 'rgb(var(--black) / <alpha-value>)',
         gray: {
           50: 'var(--gray-50)',
           100: 'var(--gray-100)',

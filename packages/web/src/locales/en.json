@@ -25,6 +25,33 @@
     "contextGlobsDescription": "Files to include as context. One glob per line.",
     "defaultModelsDescription": "Quickly set the default model for all steps.",
     "defaultContextGlobsDescription": "Fallback files to scan when no step-specific globs are set. One glob per line.",
-    "parallelConcurrencyDescription": "Maximum number of parallel tasks to run."
+    "parallelConcurrencyDescription": "Maximum number of parallel tasks to run.",
+    "triggersDescription": "Automatically run actions when workflow events fire.",
+    "addAction": "Add action",
+    "searchActions": "Search actions...",
+    "noActionsDefined": "No actions defined. Create actions in the Actions tab.",
+    "noActionsMatch": "No actions match your search."
+  },
+  "event": {
+    "preRunSpec": "Before running spec",
+    "postRunSpec": "After running spec",
+    "preApproveSpec": "Before approving spec",
+    "postApproveSpec": "After approving spec",
+    "preRunPlan": "Before running plan",
+    "postRunPlan": "After running plan",
+    "preApprovePlan": "Before approving plan",
+    "postApprovePlan": "After approving plan",
+    "preRunTasks": "Before running tasks",
+    "postRunTasks": "After running tasks",
+    "preApproveTasks": "Before approving tasks",
+    "postApproveTasks": "After approving tasks",
+    "preRunImplement": "Before running implement",
+    "postRunImplement": "After running implement",
+    "preApproveImplement": "Before approving implement",
+    "postApproveImplement": "After approving implement",
+    "preRunDone": "Before running done",
+    "postRunDone": "After running done",
+    "preApproveDone": "Before approving done",
+    "postApproveDone": "After approving done"
   }
 }

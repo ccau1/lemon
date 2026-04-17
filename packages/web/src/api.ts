@@ -14,6 +14,8 @@ async function fetchJson(path: string, init?: RequestInit) {
 }
 
 export const api = {
+  healthCheck: (init?: RequestInit) => fetchJson("/api/health", init) as Promise<{ status: string }>,
+
   getWorkspaces: () => fetchJson("/api/workspaces"),
   createWorkspace: (body: { name: string; path: string }) =>
     fetchJson("/api/workspaces", { method: "POST", body: JSON.stringify(body) }),
@@ -39,16 +41,18 @@ export const api = {
     if (includeArchived) q.set("includeArchived", "true");
     return fetchJson(`/api/tickets/all?${q.toString()}`);
   },
-  createTicket: (workspaceId: string, body: { projectId: string; title: string; description: string }) =>
+  createTicket: (workspaceId: string, body: { projectId: string; title: string; description: string; externalSource?: string; externalSourceId?: string }) =>
     fetchJson(`/api/tickets?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  updateTicket: (workspaceId: string, ticketId: string, body: { title?: string; description?: string; autoApprove?: Partial<Record<string, boolean>> }) =>
+  updateTicket: (workspaceId: string, ticketId: string, body: { title?: string; description?: string; autoApprove?: Partial<Record<string, boolean>>; triggers?: Record<string, string[]> }) =>
     fetchJson(`/api/tickets/${ticketId}?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  getTicketActionLinkages: (workspaceId: string, ticketId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/action-linkages?workspaceId=${encodeURIComponent(workspaceId)}`),
   getTicketDetails: (workspaceId: string, ticketId: string) =>
     fetchJson(`/api/tickets/${ticketId}/details?workspaceId=${encodeURIComponent(workspaceId)}`),
   advanceTicket: (workspaceId: string, ticketId: string) =>
@@ -133,6 +137,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ step }),
     }),
+  cancelTicketRun: (workspaceId: string, ticketId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/cancel?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
 
   getModels: () => fetchJson("/api/models"),
   createModel: (body: Record<string, unknown>) =>
@@ -173,6 +182,10 @@ export const api = {
   setTheme: (theme: string) => fetchJson("/api/config", { method: "POST", body: JSON.stringify({ key: "theme", value: theme }) }),
 
   getDocs: () => fetchJson("/api/docs") as Promise<{ tree: any[]; contents: Record<string, string> }>,
+
+  getServerInfo: () => fetchJson("/api/server-info") as Promise<{ dataDir: string }>,
+  setDataDir: (dataDir: string) =>
+    fetchJson("/api/server-info/datadir", { method: "POST", body: JSON.stringify({ dataDir }) }) as Promise<{ success: boolean; restartRequired: boolean }>,
 
   getIntegrations: () => fetchJson("/api/integrations"),
   getIntegrationTypes: () => fetchJson("/api/integrations/types") as Promise<

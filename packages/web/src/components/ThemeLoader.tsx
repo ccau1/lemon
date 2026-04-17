@@ -2,13 +2,22 @@ import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api.ts'
 
+const THEME_KEY = 'lemon-theme'
+
 export function ThemeLoader() {
   const { data: config } = useQuery({
     queryKey: ['config'],
     queryFn: () => api.getConfig(),
   })
 
-  const theme = config?.theme || 'dark'
+  // Sync server theme to localStorage for instant restore on reload
+  useEffect(() => {
+    if (config?.theme) {
+      localStorage.setItem(THEME_KEY, config.theme)
+    }
+  }, [config?.theme])
+
+  const theme = config?.theme || localStorage.getItem(THEME_KEY) || 'dark'
 
   useEffect(() => {
     const customStyle = document.getElementById('custom-theme') as HTMLStyleElement | null

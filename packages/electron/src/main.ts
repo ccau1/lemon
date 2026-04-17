@@ -1,8 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Notification } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { startServer } from '@lemon/server'
-import os from 'os'
+import { startServer, resolveDataDir } from '@lemon/server'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -29,7 +28,7 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  const dataDir = path.join(os.homedir(), '.lemon')
+  const dataDir = resolveDataDir()
   await startServer({ port: 3000, dataDir })
 
   createWindow()

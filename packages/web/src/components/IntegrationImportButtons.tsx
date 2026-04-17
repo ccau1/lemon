@@ -6,10 +6,10 @@ import ImportTicketModal, { type ImportTicketResult } from './ImportTicketModal.
 export default function IntegrationImportButtons({
   onImport,
 }: {
-  onImport: (result: { title: string; description: string }) => void
+  onImport: (result: { title: string; description: string; externalSource?: string; externalSourceId?: string }) => void
 }) {
   const { data: integrations } = useQuery({ queryKey: ['integrations'], queryFn: api.getIntegrations })
-  const [active, setActive] = useState<{ id: string; name: string } | null>(null)
+  const [active, setActive] = useState<{ id: string; name: string; type: string } | null>(null)
 
   const importable = (integrations ?? []).filter((i: any) => i.enabled && i.ticketImport?.enabled)
 
@@ -23,7 +23,7 @@ export default function IntegrationImportButtons({
           <button
             key={i.id}
             type="button"
-            onClick={() => setActive({ id: i.id, name: i.name })}
+            onClick={() => setActive({ id: i.id, name: i.name, type: i.type })}
             className="text-xs px-2.5 py-1.5 rounded border border-gray-300 text-gray-700 hover:border-indigo-500 hover:text-indigo-600 transition-colors"
           >
             {i.name}
@@ -36,7 +36,12 @@ export default function IntegrationImportButtons({
           integrationName={active.name}
           onClose={() => setActive(null)}
           onSelect={(result: ImportTicketResult) => {
-            onImport({ title: result.title, description: result.description })
+            onImport({
+              title: result.title,
+              description: result.description,
+              externalSource: active.type,
+              externalSourceId: result.id,
+            })
             setActive(null)
           }}
         />

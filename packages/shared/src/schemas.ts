@@ -20,6 +20,7 @@ export const ticketStatusSchema = z.enum([
   "implement",
   "done",
   "awaiting_review",
+  "awaiting_actions",
   "queued",
   "running",
   "error",
@@ -47,6 +48,11 @@ export const ticketSchema = z.object({
   title: z.string(),
   description: z.string(),
   status: ticketStatusSchema,
+  currentStep: z.string().optional(),
+  pendingEvent: z.string().optional(),
+  resumeTarget: z.string().optional(),
+  externalSource: z.string().optional(),
+  externalSourceId: z.string().optional(),
   archivedAt: z.string().optional(),
   autoApprove: z.record(workflowStepSchema, z.boolean()).optional(),
   createdAt: z.string(),
@@ -67,6 +73,8 @@ export const createTicketSchema = z.object({
   projectId: z.string(),
   title: z.string().min(1),
   description: z.string(),
+  externalSource: z.string().optional(),
+  externalSourceId: z.string().optional(),
 });
 
 export const modelConfigSchema = z.object({
@@ -113,4 +121,5 @@ export const settingsSchema = z.object({
   }),
   theme: z.string().default("dark"),
   stepModelOverrides: z.record(z.string(), z.record(workflowStepSchema, z.string())).default({}),
+  triggers: z.record(z.string(), z.array(z.string())).default({}),
 });

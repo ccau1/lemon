@@ -26,7 +26,12 @@ export interface Ticket {
   projectId: string;
   title: string;
   description: string;
-  status: WorkflowStep | "awaiting_review" | "queued" | "running" | "error";
+  status: WorkflowStep | "awaiting_review" | "awaiting_actions" | "queued" | "running" | "error";
+  currentStep?: string;
+  pendingEvent?: string;
+  resumeTarget?: string;
+  externalSource?: string;
+  externalSourceId?: string;
   errorStep?: string;
   errorMessage?: string;
   archivedAt?: string;
@@ -109,4 +114,5 @@ export interface Settings {
   contextGlobs: string[] | Record<string, string[]>;
   theme: string;
   stepModelOverrides: Record<string, Partial<Record<WorkflowStep, string>>>;
+  triggers: Record<string, string[]>;
 }

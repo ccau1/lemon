@@ -10,7 +10,7 @@ import IntegrationImportButtons from '../components/IntegrationImportButtons.tsx
 
 const LS_KEY = 'ticket_form'
 
-type TicketFormStore = Record<string, Record<string, { title?: string; description?: string; open?: boolean; projectId?: string }>>
+type TicketFormStore = Record<string, Record<string, { title?: string; description?: string; open?: boolean; projectId?: string; externalSource?: string; externalSourceId?: string }>>
 
 function readStore(): TicketFormStore {
   try {
@@ -24,13 +24,13 @@ function writeStore(store: TicketFormStore) {
   localStorage.setItem(LS_KEY, JSON.stringify(store))
 }
 
-function getFormState(workspaceId: string, projectId: string): { title: string; description: string; open: boolean; projectId?: string } {
+function getFormState(workspaceId: string, projectId: string): { title: string; description: string; open: boolean; projectId?: string; externalSource?: string; externalSourceId?: string } {
   const store = readStore()
   const raw = store[workspaceId]?.[projectId]
-  return { title: raw?.title || '', description: raw?.description || '', open: raw?.open || false, projectId: raw?.projectId }
+  return { title: raw?.title || '', description: raw?.description || '', open: raw?.open || false, projectId: raw?.projectId, externalSource: raw?.externalSource, externalSourceId: raw?.externalSourceId }
 }
 
-function setFormState(workspaceId: string, projectId: string, patch: { title?: string; description?: string; open?: boolean; projectId?: string }) {
+function setFormState(workspaceId: string, projectId: string, patch: { title?: string; description?: string; open?: boolean; projectId?: string; externalSource?: string; externalSourceId?: string }) {
   const store = readStore()
   if (!store[workspaceId]) store[workspaceId] = {}
   const existing = store[workspaceId][projectId] || {}
@@ -115,11 +115,15 @@ export default function WorkspacePage() {
   const [ticketTitle, setTicketTitle] = useState(initialGeneral.title)
   const [ticketDescription, setTicketDescription] = useState(initialGeneral.description)
   const [ticketProjectId, setTicketProjectId] = useState(initialGeneral.projectId || firstProjectId)
+  const [ticketExternalSource, setTicketExternalSource] = useState<string | undefined>(initialGeneral.externalSource)
+  const [ticketExternalSourceId, setTicketExternalSourceId] = useState<string | undefined>(initialGeneral.externalSourceId)
   const [showTicketForm, setShowTicketForm] = useState(initialGeneral.open)
 
   const initialProject = getFormState(workspaceId || '', projectKey)
   const [projectTicketTitle, setProjectTicketTitle] = useState(initialProject.title)
   const [projectTicketDescription, setProjectTicketDescription] = useState(initialProject.description)
+  const [projectExternalSource, setProjectExternalSource] = useState<string | undefined>(initialProject.externalSource)
+  const [projectExternalSourceId, setProjectExternalSourceId] = useState<string | undefined>(initialProject.externalSourceId)
   const [showProjectTicketForm, setShowProjectTicketForm] = useState(initialProject.open)
 
   const [showConfigModal, setShowConfigModal] = useState(false)
@@ -147,8 +151,8 @@ export default function WorkspacePage() {
       skipNextProjectPersist.current = false
       return
     }
-    setFormState(workspaceId, projectKey, { title: projectTicketTitle, description: projectTicketDescription, open: showProjectTicketForm })
-  }, [workspaceId, projectKey, projectTicketTitle, showProjectTicketForm])
+    setFormState(workspaceId, projectKey, { title: projectTicketTitle, description: projectTicketDescription, open: showProjectTicketForm, externalSource: projectExternalSource, externalSourceId: projectExternalSourceId })
+  }, [workspaceId, projectKey, projectTicketTitle, showProjectTicketForm, projectExternalSource, projectExternalSourceId])
 
   useEffect(() => {
     if (!workspaceId) return
@@ -156,6 +160,8 @@ export default function WorkspacePage() {
     setProjectTicketTitle(saved.title)
     setProjectTicketDescription(saved.description)
     setShowProjectTicketForm(saved.open)
+    setProjectExternalSource(saved.externalSource)
+    setProjectExternalSourceId(saved.externalSourceId)
     skipNextProjectPersist.current = true
     projectHydrated.current = true
   }, [workspaceId, projectKey])
@@ -167,12 +173,14 @@ export default function WorkspacePage() {
     setTicketDescription(saved.description)
     setShowTicketForm(saved.open)
     setTicketProjectId(saved.projectId || firstProjectId)
+    setTicketExternalSource(saved.externalSource)
+    setTicketExternalSourceId(saved.externalSourceId)
   }, [workspaceId, firstProjectId])
 
   useEffect(() => {
     if (!workspaceId) return
-    setFormState(workspaceId, generalKey, { title: ticketTitle, description: ticketDescription, open: showTicketForm, projectId: ticketProjectId })
-  }, [workspaceId, ticketTitle, showTicketForm, ticketProjectId])
+    setFormState(workspaceId, generalKey, { title: ticketTitle, description: ticketDescription, open: showTicketForm, projectId: ticketProjectId, externalSource: ticketExternalSource, externalSourceId: ticketExternalSourceId })
+  }, [workspaceId, ticketTitle, showTicketForm, ticketProjectId, ticketExternalSource, ticketExternalSourceId])
 
   useEffect(() => {
     if (showConfigModal) {
@@ -212,7 +220,7 @@ export default function WorkspacePage() {
   }, [rawConfig, showConfigModal])
 
   const createTicket = useMutation({
-    mutationFn: (body: { projectId: string; title: string; description: string }) =>
+    mutationFn: (body: { projectId: string; title: string; description: string; externalSource?: string; externalSourceId?: string }) =>
       api.createTicket(workspaceId!, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tickets', workspaceId] })
@@ -315,9 +323,11 @@ export default function WorkspacePage() {
 
   const handleCreateTicket = () => {
     if (ticketProjectId && ticketTitle.trim()) {
-      createTicket.mutate({ projectId: ticketProjectId, title: ticketTitle, description: ticketDescription })
+      createTicket.mutate({ projectId: ticketProjectId, title: ticketTitle, description: ticketDescription, externalSource: ticketExternalSource, externalSourceId: ticketExternalSourceId })
       setTicketTitle('')
       setTicketDescription('')
+      setTicketExternalSource(undefined)
+      setTicketExternalSourceId(undefined)
       setShowTicketForm(false)
       if (workspaceId) clearFormState(workspaceId, generalKey)
     }
@@ -325,9 +335,11 @@ export default function WorkspacePage() {
 
   const handleCreateProjectTicket = () => {
     if (singleProject && projectTicketTitle.trim()) {
-      createTicket.mutate({ projectId: singleProject.id, title: projectTicketTitle, description: projectTicketDescription })
+      createTicket.mutate({ projectId: singleProject.id, title: projectTicketTitle, description: projectTicketDescription, externalSource: projectExternalSource, externalSourceId: projectExternalSourceId })
       setProjectTicketTitle('')
       setProjectTicketDescription('')
+      setProjectExternalSource(undefined)
+      setProjectExternalSourceId(undefined)
       setShowProjectTicketForm(false)
       if (workspaceId && singleProject) clearFormState(workspaceId, singleProject.id)
     }
@@ -469,9 +481,11 @@ export default function WorkspacePage() {
                 />
                 <div className="flex justify-start">
                   <IntegrationImportButtons
-                    onImport={({ title: t, description: d }) => {
+                    onImport={({ title: t, description: d, externalSource, externalSourceId }) => {
                       setTicketTitle(t)
                       setTicketDescription(d)
+                      setTicketExternalSource(externalSource)
+                      setTicketExternalSourceId(externalSourceId)
                     }}
                   />
                 </div>
@@ -513,7 +527,14 @@ export default function WorkspacePage() {
                 >
                   <div>
                     <div className="text-sm font-medium">{t.title}</div>
-                    <div className="text-xs text-gray-500 uppercase">{formatStatus(t.status)}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs text-gray-500 uppercase">{formatStatus(t.status)}</div>
+                      {t.externalSource && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase tracking-wide">
+                          {t.externalSource}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <span className="text-indigo-600 text-sm">Open →</span>
                 </Link>
@@ -640,9 +661,11 @@ export default function WorkspacePage() {
                     />
                     <div className="flex justify-start">
                       <IntegrationImportButtons
-                        onImport={({ title: t, description: d }) => {
+                        onImport={({ title: t, description: d, externalSource, externalSourceId }) => {
                           setProjectTicketTitle(t)
                           setProjectTicketDescription(d)
+                          setProjectExternalSource(externalSource)
+                          setProjectExternalSourceId(externalSourceId)
                         }}
                       />
                     </div>
@@ -703,7 +726,7 @@ export default function WorkspacePage() {
 
       {showConfigModal && globalConfig && rawConfig && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
           onClick={(e) => {
             if (e.target === e.currentTarget) setShowConfigModal(false)
           }}

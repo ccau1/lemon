@@ -6,6 +6,7 @@ import type { ConfigManager } from "../config/settings.js";
 import type { WorkspaceRegistry } from "../config/workspace-registry.js";
 import type { LlmService } from "./llm.js";
 import type { ModelRegistry } from "../config/model-registry.js";
+import type { ActionTriggerService } from "./action-trigger.js";
 
 export class ActionRunQueue {
   private queues = new Map<string, PQueue>();
@@ -15,8 +16,13 @@ export class ActionRunQueue {
     private llm: LlmService,
     private configManager: ConfigManager,
     private modelRegistry: ModelRegistry,
-    private workspaces: WorkspaceRegistry
+    private workspaces: WorkspaceRegistry,
+    private actionTriggerService?: ActionTriggerService
   ) {}
+
+  setActionTriggerService(service: ActionTriggerService) {
+    this.actionTriggerService = service;
+  }
 
   private getQueue(workspaceId: string): PQueue {
     if (!this.queues.has(workspaceId)) {
@@ -60,7 +66,7 @@ export class ActionRunQueue {
 
       try {
         const workspace = this.workspaces.get(workspaceId);
-        const content = await this.llm.chat(model, messages as any, workspace?.path);
+        const { content } = await this.llm.chat(model, messages as any, workspace?.path);
         await db
           .update(actionRuns)
           .set({ status: "done", response: content })
@@ -71,6 +77,8 @@ export class ActionRunQueue {
           .update(actionRuns)
           .set({ status: "error", response: errorText })
           .where(eq(actionRuns.id, runId));
+      } finally {
+        await this.actionTriggerService?.onActionRunComplete(workspaceId, runId);
       }
     });
   }
@@ -133,6 +141,7 @@ export class ActionRunQueue {
             .update(actionRuns)
             .set({ status: "error", response: "Action not found on recovery" })
             .where(eq(actionRuns.id, row.id));
+          await this.actionTriggerService?.onActionRunComplete(ws.id, row.id);
           continue;
         }
 

@@ -23,13 +23,23 @@ export type ThreadMessage = {
 export type TicketState = {
   errorStep?: string | null;
   errorMessage?: string | null;
+  forceStep?: WorkflowStep | null;
 };
 
 export type TicketConf = {
   autoApprove?: Partial<Record<WorkflowStep, boolean>>;
+  triggers?: Record<string, string[]>;
 };
 
 const steps: WorkflowStep[] = ["spec", "plan", "tasks", "implement", "done"];
+
+export const stepArtifacts: Record<WorkflowStep, string[]> = {
+  spec: ["spec.md"],
+  plan: ["plan.md"],
+  tasks: ["tasks.json", "tasks.md"],
+  implement: ["implement.md"],
+  done: [],
+};
 
 export function ticketDir(workspacePath: string, ticketId: string): string {
   return path.join(workspacePath, ".lemon", "tickets", ticketId);
@@ -51,44 +61,51 @@ export function ensureTicketDir(workspacePath: string, ticketId: string): string
   return dir;
 }
 
-export function readSpec(workspacePath: string, ticketId: string): string | null {
-  const filePath = path.join(ticketDir(workspacePath, ticketId), "spec.md");
+export function hasStepArtifact(workspacePath: string, ticketId: string, step: WorkflowStep): boolean {
+  return stepArtifacts[step].some((file) => fs.existsSync(path.join(ticketDir(workspacePath, ticketId), file)));
+}
+
+export function readStep(workspacePath: string, ticketId: string, step: WorkflowStep): string | null {
+  const fileName = step === "tasks" ? "tasks.json" : `${step}.md`;
+  const filePath = path.join(ticketDir(workspacePath, ticketId), fileName);
   if (!fs.existsSync(filePath)) return null;
   return fs.readFileSync(filePath, "utf-8");
+}
+
+export function writeStep(workspacePath: string, ticketId: string, step: WorkflowStep, content: string): void {
+  const dir = ensureTicketDir(workspacePath, ticketId);
+  const fileName = step === "tasks" ? "tasks.json" : `${step}.md`;
+  fs.writeFileSync(path.join(dir, fileName), content, "utf-8");
+}
+
+export function readSpec(workspacePath: string, ticketId: string): string | null {
+  return readStep(workspacePath, ticketId, "spec");
 }
 
 export function writeSpec(workspacePath: string, ticketId: string, content: string): void {
-  const dir = ensureTicketDir(workspacePath, ticketId);
-  fs.writeFileSync(path.join(dir, "spec.md"), content, "utf-8");
+  writeStep(workspacePath, ticketId, "spec", content);
 }
 
 export function readPlan(workspacePath: string, ticketId: string): string | null {
-  const filePath = path.join(ticketDir(workspacePath, ticketId), "plan.md");
-  if (!fs.existsSync(filePath)) return null;
-  return fs.readFileSync(filePath, "utf-8");
+  return readStep(workspacePath, ticketId, "plan");
 }
 
 export function writePlan(workspacePath: string, ticketId: string, content: string): void {
-  const dir = ensureTicketDir(workspacePath, ticketId);
-  fs.writeFileSync(path.join(dir, "plan.md"), content, "utf-8");
+  writeStep(workspacePath, ticketId, "plan", content);
 }
 
 export function readImplement(workspacePath: string, ticketId: string): string | null {
-  const filePath = path.join(ticketDir(workspacePath, ticketId), "implement.md");
-  if (!fs.existsSync(filePath)) return null;
-  return fs.readFileSync(filePath, "utf-8");
+  return readStep(workspacePath, ticketId, "implement");
 }
 
 export function writeImplement(workspacePath: string, ticketId: string, content: string): void {
-  const dir = ensureTicketDir(workspacePath, ticketId);
-  fs.writeFileSync(path.join(dir, "implement.md"), content, "utf-8");
+  writeStep(workspacePath, ticketId, "implement", content);
 }
 
 export function readTasks(workspacePath: string, ticketId: string): TaskItem[] | null {
-  const filePath = path.join(ticketDir(workspacePath, ticketId), "tasks.json");
-  if (!fs.existsSync(filePath)) return null;
+  const raw = readStep(workspacePath, ticketId, "tasks");
+  if (!raw) return null;
   try {
-    const raw = fs.readFileSync(filePath, "utf-8");
     return JSON.parse(raw) as TaskItem[];
   } catch {
     return null;
@@ -96,8 +113,8 @@ export function readTasks(workspacePath: string, ticketId: string): TaskItem[] |
 }
 
 export function writeTasks(workspacePath: string, ticketId: string, tasks: TaskItem[]): void {
+  writeStep(workspacePath, ticketId, "tasks", JSON.stringify(tasks, null, 2));
   const dir = ensureTicketDir(workspacePath, ticketId);
-  fs.writeFileSync(path.join(dir, "tasks.json"), JSON.stringify(tasks, null, 2), "utf-8");
   const markdown = tasks.map((t) => `- [${t.done ? "x" : " "}] ${t.description}`).join("\n");
   fs.writeFileSync(path.join(dir, "tasks.md"), markdown, "utf-8");
 }
@@ -157,12 +174,7 @@ export function unarchiveTicket(workspacePath: string, ticketId: string): void {
 export function listTicketArtifactSteps(workspacePath: string, ticketId: string): WorkflowStep[] {
   const dir = ticketDir(workspacePath, ticketId);
   if (!fs.existsSync(dir)) return [];
-  const existing: WorkflowStep[] = [];
-  if (fs.existsSync(path.join(dir, "spec.md"))) existing.push("spec");
-  if (fs.existsSync(path.join(dir, "plan.md"))) existing.push("plan");
-  if (fs.existsSync(path.join(dir, "tasks.json"))) existing.push("tasks");
-  if (fs.existsSync(path.join(dir, "implement.md"))) existing.push("implement");
-  return existing;
+  return steps.filter((s) => stepArtifacts[s].some((file) => fs.existsSync(path.join(dir, file))));
 }
 
 export function deriveCurrentStep(workspacePath: string, ticketId: string): WorkflowStep {
@@ -181,14 +193,8 @@ export function clearDownstreamArtifacts(
 ): void {
   const dir = ticketDir(workspacePath, ticketId);
   if (!fs.existsSync(dir)) return;
-  const toDelete: string[] = [];
-  if (step === "spec") {
-    toDelete.push("plan.md", "tasks.json", "tasks.md", "implement.md");
-  } else if (step === "plan") {
-    toDelete.push("tasks.json", "tasks.md", "implement.md");
-  } else if (step === "tasks") {
-    toDelete.push("implement.md");
-  }
+  const stepIdx = steps.indexOf(step);
+  const toDelete = steps.slice(stepIdx + 1).flatMap((s) => stepArtifacts[s]);
   for (const file of toDelete) {
     const p = path.join(dir, file);
     if (fs.existsSync(p)) fs.unlinkSync(p);

@@ -1,14 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { tickets } from "../db/schema.js";
+import { eq, inArray } from "drizzle-orm";
+import { tickets, eventActionLinkages } from "../db/schema.js";
 import type { DB } from "../db/index.js";
 import type { LlmService } from "../services/llm.js";
 import type { WorkflowEngine } from "../services/workflow.js";
 import type { ConfigManager } from "../config/settings.js";
 import type { BroadcastFn } from "../services/workflow.js";
 import type { EventDispatcher } from "../services/event-dispatcher.js";
-import { stripPreamble, parseQuestion, isValidContent } from "../services/workflow.js";
+import { stripPreamble, parseQuestion, assertValidContent } from "../services/workflow.js";
 import type { WorkspaceRegistry } from "../config/workspace-registry.js";
 import type { WorkflowStep } from "@lemon/shared";
 import { getThreadMessages, appendThreadMessages, type ThreadMessage } from "../services/thread.js";
@@ -120,12 +120,18 @@ export async function workflowRoutes(
       title: z.string().min(1).optional(),
       description: z.string().optional(),
       autoApprove: z.record(z.enum(["spec", "plan", "tasks", "implement", "done"]), z.boolean()).optional(),
+      triggers: z.record(z.string(), z.array(z.string())).optional(),
     }).parse(request.body);
     const db = getDb(workspaceId);
     if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
     const ws = workspaceRegistry.get(workspaceId);
-    if (ws && body.autoApprove !== undefined) {
-      writeTicketConf(ws.path, id, { autoApprove: body.autoApprove });
+    if (ws && (body.autoApprove !== undefined || body.triggers !== undefined)) {
+      const conf = readTicketConf(ws.path, id);
+      writeTicketConf(ws.path, id, {
+        ...conf,
+        ...(body.autoApprove !== undefined ? { autoApprove: body.autoApprove } : {}),
+        ...(body.triggers !== undefined ? { triggers: body.triggers } : {}),
+      });
     }
     const now = new Date().toISOString();
     const update: any = { title: body.title, description: body.description, updatedAt: now };
@@ -151,7 +157,7 @@ export async function workflowRoutes(
     const ws = workspaceRegistry.get(workspaceId);
     if (!ws) return reply.status(404).send({ error: "Workspace not found" });
 
-    const threadMessages = await getThreadMessages(ws.path, id, model.id);
+    const threadMessages = await getThreadMessages(ws.path, id, model.id, body.step);
     let newMessages: ThreadMessage[] = body.messages.map((m) => ({ role: m.role as ThreadMessage["role"], content: m.content }));
 
     if (body.revise && (body.step === "spec" || body.step === "plan")) {
@@ -182,7 +188,9 @@ export async function workflowRoutes(
     }
 
     const allMessages: ThreadMessage[] = [...threadMessages, ...newMessages];
-    let content = await llm.chat(model, allMessages, ws.path);
+    const chatResult = await llm.chat(model, allMessages, ws.path);
+    let content = chatResult.content;
+    void chatResult.durationMs;
     content = stripPreamble(content);
 
     const question = parseQuestion(content);
@@ -191,13 +199,11 @@ export async function workflowRoutes(
         ...newMessages.map((m) => ({ ...m, modelId: model.id, step: body.step })),
         { role: "assistant", content: `QUESTION: ${question}`, modelId: model.id, step: body.step },
       ]);
-      const updatedThread = await getThreadMessages(ws.path, id, model.id);
+      const updatedThread = await getThreadMessages(ws.path, id, model.id, body.step);
       return { content: `QUESTION: ${question}`, model: model.name, thread: updatedThread };
     }
 
-    if (!isValidContent(body.step, content)) {
-      throw new Error("AI returned invalid or incomplete output. Please try again or regenerate this step.");
-    }
+    assertValidContent(body.step, content);
 
     await appendThreadMessages(ws.path, id, [
       ...newMessages.map((m) => ({ ...m, modelId: model.id, step: body.step })),
@@ -219,7 +225,7 @@ export async function workflowRoutes(
       engine.runTicket(workspaceId, id).catch(() => {});
     }
 
-    const updatedThread = await getThreadMessages(ws.path, id, model.id);
+    const updatedThread = await getThreadMessages(ws.path, id, model.id, body.step);
     return { content, model: model.name, thread: updatedThread };
   });
 
@@ -240,7 +246,7 @@ export async function workflowRoutes(
     const ws = workspaceRegistry.get(workspaceId);
     if (!ws) return reply.status(404).send({ error: "Workspace not found" });
 
-    const threadMessages = await getThreadMessages(ws.path, id, model.id);
+    const threadMessages = await getThreadMessages(ws.path, id, model.id, body.step);
     const newMessages: ThreadMessage[] = [
       {
         role: "system",
@@ -256,8 +262,9 @@ export async function workflowRoutes(
       ...body.messages.map((m) => ({ role: m.role as ThreadMessage["role"], content: m.content })),
     ];
     const allMessages: ThreadMessage[] = [...threadMessages, ...newMessages];
-    let sectionResponse = await llm.chat(model, allMessages, ws.path);
-    sectionResponse = stripPreamble(sectionResponse);
+    const sectionChatResult = await llm.chat(model, allMessages, ws.path);
+    let sectionResponse = sectionChatResult.content;
+    void sectionChatResult.durationMs;
 
     // Strip optional outer markdown fences
     const fenced = sectionResponse.match(/^```(?:markdown)?\n?([\s\S]*?)```$/);
@@ -300,7 +307,7 @@ export async function workflowRoutes(
       return reply.status(400).send({ error: "Section chat not supported for tasks step" });
     }
 
-    const updatedThread = await getThreadMessages(ws.path, id, model.id);
+    const updatedThread = await getThreadMessages(ws.path, id, model.id, body.step);
     return { content: newContent, model: model.name, thread: updatedThread };
   });
 
@@ -321,7 +328,7 @@ export async function workflowRoutes(
     const ws = workspaceRegistry.get(workspaceId);
     if (!ws) return reply.status(404).send({ error: "Workspace not found" });
 
-    const threadMessages = await getThreadMessages(ws.path, id, model.id);
+    const threadMessages = await getThreadMessages(ws.path, id, model.id, "tasks");
     const newMessages: ThreadMessage[] = [
       {
         role: "system",
@@ -337,7 +344,9 @@ export async function workflowRoutes(
       ...body.messages.map((m) => ({ role: m.role as ThreadMessage["role"], content: m.content })),
     ];
     const allMessages: ThreadMessage[] = [...threadMessages, ...newMessages];
-    let taskResponse = await llm.chat(model, allMessages, ws.path);
+    const taskChatResult = await llm.chat(model, allMessages, ws.path);
+    let taskResponse = taskChatResult.content;
+    void taskChatResult.durationMs;
 
     // Strip optional outer markdown fences
     const fenced = taskResponse.match(/^```(?:markdown)?\n?([\s\S]*?)```$/);
@@ -368,7 +377,7 @@ export async function workflowRoutes(
     broadcast("ticket:updated", { workspaceId, ticketId: id, step: "tasks", newStatus: "awaiting_review" });
     engine.runTicket(workspaceId, id).catch(() => {});
 
-    const updatedThread = await getThreadMessages(ws.path, id, model.id);
+    const updatedThread = await getThreadMessages(ws.path, id, model.id, "tasks");
     return { content: taskResponse, model: model.name, thread: updatedThread };
   });
 
@@ -386,7 +395,7 @@ export async function workflowRoutes(
     if (!model) return reply.status(400).send({ error: "No model resolved for step" });
     const ws = workspaceRegistry.get(workspaceId);
     if (!ws) return reply.status(404).send({ error: "Workspace not found" });
-    const thread = await getThreadMessages(ws.path, id, model.id);
+    const thread = await getThreadMessages(ws.path, id, model.id, step as WorkflowStep);
     return { modelId: model.id, thread };
   });
 
@@ -481,76 +490,50 @@ export async function workflowRoutes(
     const { id } = request.params as { id: string };
     const { workspaceId } = request.query as { workspaceId?: string };
     if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
-    const db = getDb(workspaceId);
-    const ticket = await db.query.tickets.findFirst({ where: eq(tickets.id, id) });
-    if (!ticket) return reply.status(404).send({ error: "Ticket not found" });
     if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
 
-    const ws = workspaceRegistry.get(workspaceId);
-    const state = ws ? readTicketState(ws.path, id) : {};
-    let completedStep: WorkflowStep;
-    if (ticket.status === "error" && state.errorStep) {
-      completedStep = state.errorStep as WorkflowStep;
-    } else if (ticket.status === "awaiting_review" || ticket.status === "queued" || ticket.status === "running") {
-      completedStep = ws ? deriveCurrentStepFromFiles(ws.path, id) : "spec";
-    } else {
-      completedStep = ticket.status as WorkflowStep;
+    const updatedTicket = await engine.advanceTicket(workspaceId, id);
+    if (!updatedTicket) return reply.status(404).send({ error: "Ticket not found" });
+    if (updatedTicket.status === "awaiting_actions") {
+      return { success: true, status: "awaiting_actions" };
     }
-
-    await dispatcher?.dispatch(`preApprove${capitalize(completedStep)}` as any, { workspaceId, ticketId: id, step: completedStep });
-
-    const newStatus = nextStep(completedStep);
-    if (ws) writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
-    await db.update(tickets).set({ status: newStatus, updatedAt: new Date().toISOString() }).where(eq(tickets.id, id));
-
-    broadcast("ticket:advanced", { workspaceId, ticketId: id, newStatus });
-
-    await dispatcher?.dispatch(`postApprove${capitalize(completedStep)}` as any, { workspaceId, ticketId: id, step: completedStep, newStep: newStatus });
-    await dispatcher?.dispatch("ticketAdvanced", { workspaceId, ticketId: id, step: completedStep, newStep: newStatus });
-
-    if (newStatus !== "done") {
-      engine.runTicket(workspaceId, id).catch(() => {});
-    }
-
-    return { success: true, newStatus };
+    return { success: true, newStatus: updatedTicket.status };
   });
 
   fastify.post("/tickets/:id/approve", async (request, reply) => {
     const { id } = request.params as { id: string };
     const { workspaceId } = request.query as { workspaceId?: string };
     if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
-    const db = getDb(workspaceId);
-    const ticket = await db.query.tickets.findFirst({ where: eq(tickets.id, id) });
-    if (!ticket) return reply.status(404).send({ error: "Ticket not found" });
     if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
 
-    const ws = workspaceRegistry.get(workspaceId);
-    const state = ws ? readTicketState(ws.path, id) : {};
-    let completedStep: WorkflowStep;
-    if (ticket.status === "error" && state.errorStep) {
-      completedStep = state.errorStep as WorkflowStep;
-    } else if (ticket.status === "awaiting_review" || ticket.status === "queued" || ticket.status === "running") {
-      completedStep = ws ? deriveCurrentStepFromFiles(ws.path, id) : "spec";
-    } else {
-      completedStep = ticket.status as WorkflowStep;
+    const updatedTicket = await engine.approveTicket(workspaceId, id);
+    if (!updatedTicket) return reply.status(404).send({ error: "Ticket not found" });
+    if (updatedTicket.status === "awaiting_actions") {
+      return { success: true, status: "awaiting_actions" };
     }
+    return { success: true, newStatus: updatedTicket.status };
+  });
 
-    await dispatcher?.dispatch(`preApprove${capitalize(completedStep)}` as any, { workspaceId, ticketId: id, step: completedStep });
-
-    const newStatus = nextStep(completedStep);
-    if (ws) writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
-    await db.update(tickets).set({ status: newStatus, updatedAt: new Date().toISOString() }).where(eq(tickets.id, id));
-
-    broadcast("ticket:approved", { workspaceId, ticketId: id, newStatus });
-
-    await dispatcher?.dispatch(`postApprove${capitalize(completedStep)}` as any, { workspaceId, ticketId: id, step: completedStep, newStep: newStatus });
-    await dispatcher?.dispatch("ticketApproved", { workspaceId, ticketId: id, step: completedStep, newStep: newStatus });
-
-    if (newStatus !== "done") {
-      engine.runTicket(workspaceId, id).catch(() => {});
-    }
-
-    return { success: true, newStatus };
+  fastify.get("/tickets/:id/action-linkages", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { workspaceId } = request.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+    const db = getDb(workspaceId);
+    const linkages = await db.query.eventActionLinkages.findMany({
+      where: eq(eventActionLinkages.ticketId, id),
+      orderBy: (l, { desc }) => [desc(l.createdAt)],
+    });
+    const runs = linkages.length > 0
+      ? await db.query.actionRuns.findMany({
+          where: (runs, { inArray }) => inArray(runs.id, linkages.map((l) => l.actionRunId)),
+        })
+      : [];
+    const runById = new Map(runs.map((r) => [r.id, r]));
+    const result = linkages.map((l) => ({
+      ...l,
+      actionRun: runById.get(l.actionRunId) ?? null,
+    }));
+    return { linkages: result };
   });
 
   fastify.post("/tickets/:id/reject", async (request, reply) => {
@@ -652,16 +635,8 @@ export async function workflowRoutes(
     const ws = workspaceRegistry.get(workspaceId);
 
     if (ws) {
-      if (body.step === "spec") {
-        clearDownstreamArtifacts(ws.path, id, "spec");
-      } else if (body.step === "plan") {
-        clearDownstreamArtifacts(ws.path, id, "plan");
-      } else if (body.step === "tasks") {
-        clearDownstreamArtifacts(ws.path, id, "tasks");
-      } else if (body.step === "implement") {
-        // nothing downstream to clear
-      }
-      writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
+      clearDownstreamArtifacts(ws.path, id, body.step);
+      writeTicketState(ws.path, id, { errorStep: null, errorMessage: null, forceStep: body.step });
     }
 
     const db = getDb(workspaceId);
@@ -677,6 +652,15 @@ export async function workflowRoutes(
     if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
     if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
     await engine.runTicket(workspaceId, id);
+    return { success: true };
+  });
+
+  fastify.post("/tickets/:id/cancel", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { workspaceId } = request.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+    if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
+    await engine.cancelTicketRun(workspaceId, id);
     return { success: true };
   });
 

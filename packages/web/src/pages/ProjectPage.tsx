@@ -7,9 +7,9 @@ import IntegrationImportButtons from '../components/IntegrationImportButtons.tsx
 
 const LS_KEY = 'project_page_ticket_form'
 
-type LsStore = Record<string, Record<string, { title: string; description: string }>>
+type LsStore = Record<string, Record<string, { title: string; description: string; externalSource?: string; externalSourceId?: string }>>
 
-function readLs(workspaceId: string, projectId: string): { title: string; description: string } {
+function readLs(workspaceId: string, projectId: string): { title: string; description: string; externalSource?: string; externalSourceId?: string } {
   try {
     const store = JSON.parse(localStorage.getItem(LS_KEY) || '{}') as LsStore
     return store[workspaceId]?.[projectId] || { title: '', description: '' }
@@ -18,7 +18,7 @@ function readLs(workspaceId: string, projectId: string): { title: string; descri
   }
 }
 
-function writeLs(workspaceId: string, projectId: string, values: { title: string; description: string }) {
+function writeLs(workspaceId: string, projectId: string, values: { title: string; description: string; externalSource?: string; externalSourceId?: string }) {
   try {
     const store = JSON.parse(localStorage.getItem(LS_KEY) || '{}') as LsStore
     if (!store[workspaceId]) store[workspaceId] = {}
@@ -48,26 +48,32 @@ export default function ProjectPage() {
 
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const [externalSource, setExternalSource] = useState<string | undefined>(undefined)
+  const [externalSourceId, setExternalSourceId] = useState<string | undefined>(undefined)
   useEffect(() => {
     if (workspaceId && projectId) {
       const saved = readLs(workspaceId, projectId)
       setTitle(saved.title)
       setDescription(saved.description)
+      setExternalSource(saved.externalSource)
+      setExternalSourceId(saved.externalSourceId)
     }
   }, [workspaceId, projectId])
 
   useEffect(() => {
     if (workspaceId && projectId) {
-      writeLs(workspaceId, projectId, { title, description })
+      writeLs(workspaceId, projectId, { title, description, externalSource, externalSourceId })
     }
-  }, [workspaceId, projectId, title, description])
+  }, [workspaceId, projectId, title, description, externalSource, externalSourceId])
 
   const createTicket = useMutation({
-    mutationFn: (body: { projectId: string; title: string; description: string }) => api.createTicket(workspaceId!, body),
+    mutationFn: (body: { projectId: string; title: string; description: string; externalSource?: string; externalSourceId?: string }) => api.createTicket(workspaceId!, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tickets', workspaceId, projectId] })
       setTitle('')
       setDescription('')
+      setExternalSource(undefined)
+      setExternalSourceId(undefined)
       if (workspaceId && projectId) clearLs(workspaceId, projectId)
     },
   })
@@ -100,14 +106,16 @@ export default function ProjectPage() {
         />
         <div className="flex items-center justify-between">
           <IntegrationImportButtons
-            onImport={({ title: t, description: d }) => {
+            onImport={({ title: t, description: d, externalSource: es, externalSourceId: esi }) => {
               setTitle(t)
               setDescription(d)
+              setExternalSource(es)
+              setExternalSourceId(esi)
             }}
           />
           <button
             className="bg-indigo-600 text-white px-4 py-2 rounded"
-            onClick={() => createTicket.mutate({ projectId: projectId!, title, description })}
+            onClick={() => createTicket.mutate({ projectId: projectId!, title, description, externalSource, externalSourceId })}
           >
             Add Ticket
           </button>
@@ -123,7 +131,14 @@ export default function ProjectPage() {
             >
               <div>
                 <div className="font-medium">{t.title}</div>
-                <div className="text-xs text-gray-500 uppercase">{formatStatus(t.status)}</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs text-gray-500 uppercase">{formatStatus(t.status)}</div>
+                  {t.externalSource && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase tracking-wide">
+                      {t.externalSource}
+                    </span>
+                  )}
+                </div>
               </div>
               <span className="text-indigo-600 text-sm">Open →</span>
             </Link>
