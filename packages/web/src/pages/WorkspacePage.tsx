@@ -7,6 +7,7 @@ import { DropdownSelect, DropdownFilter } from '../components/Dropdown.tsx'
 import PillToggle from '../components/common/PillToggle.tsx'
 import { formatStatus } from '../utils.ts'
 import IntegrationImportButtons from '../components/IntegrationImportButtons.tsx'
+import { ErrorIndicator } from '../components/ticket/ErrorIndicator.tsx'
 
 const LS_KEY = 'ticket_form'
 
@@ -101,6 +102,12 @@ export default function WorkspacePage() {
   }, [workspaces, workspaceId])
 
   const [name, setName] = useState('')
+  const [editPath, setEditPath] = useState(false)
+  const [pathValue, setPathValue] = useState('')
+  const updateWorkspace = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: { name?: string; path?: string } }) => api.updateWorkspace(id, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspaces'] }),
+  })
   const createProject = useMutation({
     mutationFn: api.createProject,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects', workspaceId] }),
@@ -408,9 +415,60 @@ export default function WorkspacePage() {
       `}</style>
       <div className="max-w-5xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
-          <div className="flex items-baseline gap-2">
-            <h1 className="text-2xl font-bold">{workspace.name}</h1>
-            <span className="text-xs text-gray-400">workspace</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-2">
+              <h1 className="text-2xl font-bold">{workspace.name}</h1>
+              <span className="text-xs text-gray-400">workspace</span>
+            </div>
+            {editPath ? (
+              <div className="flex items-center gap-2 mt-1">
+                <input
+                  className="text-sm border border-gray-300 bg-white text-gray-900 px-2 py-1 rounded flex-1 min-w-0"
+                  value={pathValue}
+                  onChange={(e) => setPathValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && pathValue.trim()) {
+                      updateWorkspace.mutate({ id: workspace.id, body: { path: pathValue.trim() } })
+                      setEditPath(false)
+                    } else if (e.key === 'Escape') {
+                      setEditPath(false)
+                    }
+                  }}
+                  autoFocus
+                />
+                <button
+                  className="text-xs px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700"
+                  onClick={() => {
+                    if (pathValue.trim()) {
+                      updateWorkspace.mutate({ id: workspace.id, body: { path: pathValue.trim() } })
+                      setEditPath(false)
+                    }
+                  }}
+                >
+                  Save
+                </button>
+                <button
+                  className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                  onClick={() => setEditPath(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                className="text-xs text-gray-500 hover:text-indigo-600 mt-1 flex items-center gap-1"
+                onClick={() => {
+                  setPathValue(workspace.path || '')
+                  setEditPath(true)
+                }}
+                title="Edit workspace path"
+              >
+                <span className="truncate">{workspace.path || 'No path'}</span>
+                <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+            )}
           </div>
           <button
             className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:border-indigo-600 hover:text-indigo-600 transition-colors"
@@ -438,14 +496,12 @@ export default function WorkspacePage() {
                 )}
               </button>
             </div>
-            {singleProject && (
-              <Link
-                to={`/workspace/${workspaceId}/project/${singleProject.id}`}
-                className="text-indigo-600 text-sm hover:underline"
-              >
-                View Board →
-              </Link>
-            )}
+            <Link
+              to={`/tickets?workspace=${workspaceId}`}
+              className="text-indigo-600 text-sm hover:underline"
+            >
+              View Board →
+            </Link>
           </div>
 
           {showTicketForm && (
@@ -459,7 +515,7 @@ export default function WorkspacePage() {
                     onChange={(value) => setTicketProjectId(value)}
                   />
                   <input
-                    className="border border-gray-300 px-3 py-2 rounded flex-1"
+                    className="border border-gray-300 px-3 py-2 rounded flex-1 bg-white text-gray-900"
                     placeholder="Ticket title"
                     value={ticketTitle}
                     onChange={(e) => setTicketTitle(e.target.value)}
@@ -473,7 +529,7 @@ export default function WorkspacePage() {
                   </button>
                 </div>
                 <textarea
-                  className="border border-gray-300 px-3 py-2 rounded w-full"
+                  className="border border-gray-300 px-3 py-2 rounded w-full bg-white text-gray-900"
                   placeholder="Ticket description"
                   rows={3}
                   value={ticketDescription}
@@ -534,6 +590,7 @@ export default function WorkspacePage() {
                           {t.externalSource}
                         </span>
                       )}
+                      <ErrorIndicator errors={t.errors || []} />
                     </div>
                   </div>
                   <span className="text-indigo-600 text-sm">Open →</span>
@@ -575,7 +632,7 @@ export default function WorkspacePage() {
               {isEditingName ? (
                 <div className="flex gap-2 mb-3">
                   <input
-                    className="border px-3 py-2 rounded flex-1"
+                    className="border px-3 py-2 rounded flex-1 bg-white text-gray-900"
                     value={editingName}
                     onChange={(e) => setEditingName(e.target.value)}
                     onKeyDown={(e) => {
@@ -627,7 +684,7 @@ export default function WorkspacePage() {
                   </button>
                 </div>
                 <Link
-                  to={`/workspace/${workspaceId}/project/${singleProject.id}`}
+                  to={`/tickets?workspace=${workspaceId}&project=${singleProject.id}`}
                   className="text-indigo-600 text-sm hover:underline"
                 >
                   View Board →
@@ -639,7 +696,7 @@ export default function WorkspacePage() {
                   <div className="flex flex-col gap-2">
                     <div className="flex flex-col sm:flex-row gap-2">
                       <input
-                        className="border border-gray-300 px-3 py-2 rounded flex-1"
+                        className="border border-gray-300 px-3 py-2 rounded flex-1 bg-white text-gray-900"
                         placeholder="Ticket title"
                         value={projectTicketTitle}
                         onChange={(e) => setProjectTicketTitle(e.target.value)}
@@ -653,7 +710,7 @@ export default function WorkspacePage() {
                       </button>
                     </div>
                     <textarea
-                      className="border border-gray-300 px-3 py-2 rounded w-full"
+                      className="border border-gray-300 px-3 py-2 rounded w-full bg-white text-gray-900"
                       placeholder="Ticket description"
                       rows={3}
                       value={projectTicketDescription}
@@ -694,7 +751,7 @@ export default function WorkspacePage() {
             <>
               <div className="flex gap-2 mb-3">
                 <input
-                  className="border px-3 py-2 rounded flex-1"
+                  className="border px-3 py-2 rounded flex-1 bg-white text-gray-900"
                   placeholder="Project name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -740,6 +797,9 @@ export default function WorkspacePage() {
                 </button>
               </div>
               <p className="text-xs text-gray-500 mt-1">Leave fields empty to inherit global values.</p>
+              {workspace.path && (
+                <p className="text-xs text-gray-400 mt-1 truncate" title={workspace.path}>Path: {workspace.path}</p>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto p-6">

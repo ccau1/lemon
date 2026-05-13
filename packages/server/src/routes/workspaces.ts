@@ -2,7 +2,11 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
+import { eq } from "drizzle-orm";
 import type { WorkspaceRegistry } from "../config/workspace-registry.js";
+import type { DB } from "../db/index.js";
+import { tickets, actionRuns } from "../db/schema.js";
+import { hasTicketArtifacts } from "../services/file-sync.js";
 
 const createSchema = z.object({
   name: z.string().min(1),
@@ -15,7 +19,7 @@ function projectsPath(dataDir: string, workspaceId: string): string {
 
 export async function workspaceRoutes(
   fastify: FastifyInstance,
-  { registry, dataDir }: { registry: WorkspaceRegistry; dataDir: string }
+  { registry, dataDir, getDb }: { registry: WorkspaceRegistry; dataDir: string; getDb: (workspaceId: string) => DB }
 ) {
   fastify.get("/workspaces", async () => {
     return registry.list();
@@ -26,6 +30,19 @@ export async function workspaceRoutes(
     const ws = registry.get(id);
     if (!ws) return reply.status(404).send({ error: "Workspace not found" });
     return ws;
+  });
+
+  fastify.patch("/workspaces/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = z.object({
+      name: z.string().min(1).optional(),
+      path: z.string().min(1).optional(),
+    }).parse(request.body);
+    const ws = registry.get(id);
+    if (!ws) return reply.status(404).send({ error: "Workspace not found" });
+    const updated = registry.update(id, body);
+    if (!updated) return reply.status(404).send({ error: "Workspace not found" });
+    return updated;
   });
 
   fastify.post("/workspaces", async (request, reply) => {
@@ -57,5 +74,25 @@ export async function workspaceRoutes(
     const { id } = request.params as { id: string };
     registry.delete(id);
     return { success: true };
+  });
+
+  fastify.post("/workspaces/:id/cleanup-tickets", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const ws = registry.get(id);
+    if (!ws) return reply.status(404).send({ error: "Workspace not found" });
+    const db = getDb(id);
+    const allTickets = await db.select().from(tickets);
+    const deleted: string[] = [];
+    const kept: string[] = [];
+    for (const t of allTickets) {
+      if (hasTicketArtifacts(ws.path, t.id)) {
+        kept.push(t.id);
+      } else {
+        await db.delete(actionRuns).where(eq(actionRuns.ticketId, t.id));
+        await db.delete(tickets).where(eq(tickets.id, t.id));
+        deleted.push(t.id);
+      }
+    }
+    return { deleted, kept, count: deleted.length };
   });
 }

@@ -9,9 +9,11 @@ import TicketsBoardPage from './pages/TicketsBoardPage.tsx'
 import SettingsPage from './pages/SettingsPage.tsx'
 import ActionsPage from './pages/ActionsPage.tsx'
 import DocsPage from './pages/DocsPage.tsx'
+import CreateWorkspacePage from './pages/CreateWorkspacePage.tsx'
 import { useWebSocketListener } from './hooks/useWebSocket.ts'
 import { api } from './api.ts'
 import { ThemeLoader } from './components/ThemeLoader.tsx'
+import { Tooltip } from './components/Tooltip.tsx'
 import { useSelectedWorkspace } from './WorkspaceContext.tsx'
 import { useConnected } from './ConnectedContext.tsx'
 import { DropdownSelect } from './components/Dropdown.tsx'
@@ -34,7 +36,7 @@ function ThemeToggle() {
       onClick={handleToggle}
       className="p-2 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100"
       aria-label={isLight ? 'Switch to dark theme' : 'Switch to light theme'}
-      title={isLight ? 'Switch to dark theme' : 'Switch to light theme'}
+
     >
       {isLight ? (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -77,6 +79,46 @@ function WebSocketListener() {
 
   const onMessage = useCallback(
     (event: string, payload: any) => {
+      if (event === 'task:updated') {
+        const { workspaceId, ticketId, taskId, status, thoughts, result, error } = payload || {}
+        if (workspaceId && ticketId && taskId) {
+          queryClient.setQueryData(
+            ['ticketDetails', workspaceId, ticketId],
+            (old: any) => {
+              if (!old?.tasks) return old
+              return {
+                ...old,
+                tasks: old.tasks.map((t: any) =>
+                  t.id === taskId
+                    ? {
+                        ...t,
+                        status: status ?? t.status,
+                        thoughts: thoughts !== undefined ? thoughts : t.thoughts,
+                        result: result !== undefined ? result : t.result,
+                        errorMessage: error !== undefined ? error : t.errorMessage,
+                      }
+                    : t
+                ),
+              }
+            }
+          )
+        }
+        pendingRef.current.tickets = true
+        if (workspaceId) {
+          pendingRef.current.projects = workspaceId
+          pendingRef.current.ticketDetails = { workspaceId, ticketId }
+        }
+        if (timerRef.current) {
+          clearTimeout(timerRef.current)
+        }
+        timerRef.current = setTimeout(flush, 100)
+        return
+      }
+      if (event === 'device:updated') {
+        queryClient.invalidateQueries({ queryKey: ['devices'] })
+        return
+      }
+
       if (
         event.startsWith('ticket:') ||
         event === 'ticket:queued' ||
@@ -86,6 +128,74 @@ function WebSocketListener() {
         event === 'ticket:error' ||
         event === 'ticket:batch_started'
       ) {
+        const { workspaceId, ticketId } = payload || {}
+        if (workspaceId && ticketId) {
+          if (event === 'ticket:running') {
+            queryClient.setQueryData(
+              ['ticketDetails', workspaceId, ticketId],
+              (old: any) => {
+                if (!old?.ticket) return old
+                return { ...old, ticket: { ...old.ticket, state: 'running', status: 'in_progress' } }
+              }
+            )
+          }
+          if (event === 'ticket:awaiting_review') {
+            queryClient.setQueryData(
+              ['ticketDetails', workspaceId, ticketId],
+              (old: any) => {
+                if (!old?.ticket) return old
+                return { ...old, ticket: { ...old.ticket, state: 'awaiting_review', status: 'pending' } }
+              }
+            )
+          }
+          if (event === 'ticket:advanced' || event === 'ticket:approved') {
+            const newStep = payload?.newStep
+            const effStep = newStep === 'implement' || newStep === 'done' ? 'tasks' : newStep
+            queryClient.setQueryData(
+              ['ticketDetails', workspaceId, ticketId],
+              (old: any) => {
+                if (!old?.ticket) return old
+                return {
+                  ...old,
+                  ticket: {
+                    ...old.ticket,
+                    step: newStep ?? old.ticket.step,
+                    effectiveStep: effStep ?? old.ticket.effectiveStep,
+                    state: newStep === 'done' ? 'done' : 'idle',
+                    status: newStep === 'done' ? 'done' : 'pending',
+                  },
+                }
+              }
+            )
+          }
+          if (event === 'ticket:error') {
+            queryClient.setQueryData(
+              ['ticketDetails', workspaceId, ticketId],
+              (old: any) => {
+                if (!old?.ticket) return old
+                return { ...old, ticket: { ...old.ticket, state: 'error', status: 'error' } }
+              }
+            )
+          }
+          if (event === 'ticket:queued') {
+            queryClient.setQueryData(
+              ['ticketDetails', workspaceId, ticketId],
+              (old: any) => {
+                if (!old?.ticket) return old
+                return { ...old, ticket: { ...old.ticket, state: 'queued', status: 'in_progress' } }
+              }
+            )
+          }
+          if (event === 'ticket:stopped') {
+            queryClient.setQueryData(
+              ['ticketDetails', workspaceId, ticketId],
+              (old: any) => {
+                if (!old?.ticket) return old
+                return { ...old, ticket: { ...old.ticket, state: 'stopped', status: 'pending' } }
+              }
+            )
+          }
+        }
         pendingRef.current.tickets = true
         if (payload?.workspaceId) {
           pendingRef.current.projects = payload.workspaceId
@@ -99,7 +209,7 @@ function WebSocketListener() {
         timerRef.current = setTimeout(flush, 100)
       }
     },
-    [flush]
+    [flush, queryClient]
   )
 
   useWebSocketListener(onMessage)
@@ -231,7 +341,7 @@ function App() {
       <ThemeLoader />
       <WebSocketListener />
       <div className="min-h-screen flex flex-col">
-        <nav className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between md:justify-start gap-6">
+        <nav className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-6">
           <NavLink to="/" className="flex items-center gap-2 font-bold text-lg text-indigo-600">
                 <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M12 2c-1.5 1.5-3.5 2-6 2C3.5 4 2 7 2 12s1.5 8 4 8c2.5 0 4.5.5 6 2 1.5-1.5 3.5-2 6-2 2.5 0 4-3 4-8s-1.5-8-4-8c-2.5 0-4.5-.5-6-2z" />
@@ -263,24 +373,42 @@ function App() {
             >
               Actions
             </NavLink>
-            <NavLink
-              to="/docs"
-              className={navLinkClass}
-            >
-              Docs
-            </NavLink>
-            <NavLink
-              to="/settings"
-              className={navLinkClass}
-            >
-              Settings
-            </NavLink>
+
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 ml-auto">
+            <Tooltip label="Docs">
+              <NavLink
+                to="/docs"
+                className={({ isActive }: { isActive: boolean }) =>
+                  `hidden md:block p-2 rounded ${isActive ? 'text-indigo-600 bg-indigo-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`
+                }
+                aria-label="Docs"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+              </NavLink>
+            </Tooltip>
             <div className="hidden md:block">
-              <ThemeToggle />
+              <Tooltip label="Theme">
+                <ThemeToggle />
+              </Tooltip>
             </div>
+            <Tooltip label="Settings">
+              <NavLink
+                to="/settings"
+                className={({ isActive }: { isActive: boolean }) =>
+                  `hidden md:block p-2 rounded ${isActive ? 'text-indigo-600 bg-indigo-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`
+                }
+                aria-label="Settings"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </NavLink>
+            </Tooltip>
             <button
               type="button"
               className="md:hidden p-2 text-gray-600 hover:text-gray-900"
@@ -321,6 +449,13 @@ function App() {
               </div>
               <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
                 <WorkspaceSelect />
+                <Link
+                  to="/workspace/create"
+                  onClick={() => setMobileOpen(false)}
+                  className="block text-sm text-indigo-600 font-medium px-3 py-2 rounded hover:bg-indigo-50"
+                >
+                  + Create Workspace
+                </Link>
                 <div className="flex flex-col gap-2">
                   <NavLink to="/tickets" className={mobileNavLinkClass}>Tickets</NavLink>
                   {selectedWorkspaceId === 'all' ? (
@@ -341,6 +476,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/tickets" replace />} />
             <Route path="/workspace" element={<WorkspacesPage />} />
+            <Route path="/workspace/create" element={<CreateWorkspacePage />} />
             <Route path="/workspace/:workspaceId" element={<WorkspacePage />} />
             <Route path="/workspace/:workspaceId/project/:projectId" element={<ProjectPage />} />
             <Route path="/workspace/:workspaceId/ticket/:ticketId" element={<TicketPage />} />

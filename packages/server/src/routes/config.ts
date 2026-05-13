@@ -46,7 +46,11 @@ export async function configRoutes(
       if (!current[keys[i]]) current[keys[i]] = {};
       current = current[keys[i]];
     }
-    current[keys[keys.length - 1]] = value;
+    if (value === null) {
+      delete current[keys[keys.length - 1]];
+    } else {
+      current[keys[keys.length - 1]] = value;
+    }
 
     if (workspaceId) {
       manager.writeWorkspace(workspaceId, target);

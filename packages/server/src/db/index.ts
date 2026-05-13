@@ -30,7 +30,9 @@ export function getWorkspaceDb(dataDir: string, workspaceId: string): DB {
       project_id TEXT NOT NULL,
       title TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'spec',
+      status TEXT NOT NULL DEFAULT 'pending',
+      step TEXT NOT NULL DEFAULT 'spec',
+      state TEXT NOT NULL DEFAULT 'idle',
       external_source TEXT,
       external_source_id TEXT,
       created_at TEXT NOT NULL,
@@ -111,6 +113,59 @@ export function getWorkspaceDb(dataDir: string, workspaceId: string): DB {
   if (!ticketColumns2.some((c) => c.name === "current_step")) {
     sqlite.exec("ALTER TABLE tickets ADD COLUMN current_step TEXT");
   }
+  if (!ticketColumns2.some((c) => c.name === "step")) {
+    sqlite.exec("ALTER TABLE tickets ADD COLUMN step TEXT NOT NULL DEFAULT 'spec'");
+    sqlite.exec("ALTER TABLE tickets ADD COLUMN state TEXT NOT NULL DEFAULT 'idle'");
+    // Migrate existing status/current_step data into step/state/status
+    sqlite.exec(`
+      UPDATE tickets SET
+        step = CASE
+          WHEN status IN ('spec','plan','tasks','implement','done') THEN status
+          WHEN current_step IS NOT NULL THEN current_step
+          ELSE 'spec'
+        END,
+        state = CASE
+          WHEN status IN ('spec','plan','tasks','implement','done') THEN 'idle'
+          WHEN status = 'queued' THEN 'queued'
+          WHEN status = 'running' THEN 'running'
+          WHEN status = 'awaiting_review' THEN 'awaiting_review'
+          WHEN status = 'awaiting_actions' THEN 'awaiting_actions'
+          WHEN status = 'error' THEN 'error'
+          ELSE 'idle'
+        END,
+        status = CASE
+          WHEN status = 'done' THEN 'done'
+          WHEN status = 'error' THEN 'error'
+          WHEN status = 'queued' OR status = 'running' THEN 'in_progress'
+          WHEN status IN ('spec','plan','tasks','implement') THEN 'pending'
+          ELSE 'pending'
+        END
+    `);
+  }
+
+  // Repair: ensure status is consistent with step/state (idempotent, fixes migration bugs)
+  sqlite.exec(`UPDATE tickets SET state = 'done', status = 'done' WHERE step = 'done' AND (state != 'done' OR status != 'done')`);
+  sqlite.exec(`UPDATE tickets SET status = 'error' WHERE state = 'error' AND status != 'error'`);
+  sqlite.exec(`UPDATE tickets SET status = 'in_progress' WHERE state IN ('queued','running') AND status != 'in_progress'`);
+  sqlite.exec(`UPDATE tickets SET status = 'pending' WHERE state IN ('idle','awaiting_review','awaiting_actions','stopped') AND status NOT IN ('pending','done','error','in_progress')`);
+
+  // Repair: tickets incorrectly advanced to done despite task errors
+  const doneTickets = sqlite.prepare("SELECT id FROM tickets WHERE step = 'done'").all() as Array<{ id: string }>;
+  const repairStmt = sqlite.prepare("UPDATE tickets SET step = 'implement', state = 'error', status = 'error' WHERE id = ?");
+  for (const { id } of doneTickets) {
+    const tasksPath = path.join(workspaceDir, ".lemon", "tickets", id, "tasks.json");
+    if (fs.existsSync(tasksPath)) {
+      try {
+        const tasks = JSON.parse(fs.readFileSync(tasksPath, "utf-8"));
+        if (Array.isArray(tasks) && tasks.some((t: any) => t.status === "error")) {
+          repairStmt.run(id);
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+  }
+
   if (!ticketColumns2.some((c) => c.name === "pending_event")) {
     sqlite.exec("ALTER TABLE tickets ADD COLUMN pending_event TEXT");
   }

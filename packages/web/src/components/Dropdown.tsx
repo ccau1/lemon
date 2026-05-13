@@ -7,12 +7,14 @@ export function DropdownSelect({
   onChange,
   placeholder = 'Select...',
   className = '',
+  leftIcon,
 }: {
-  options: { value: string; label: string; disabled?: boolean }[]
+  options: { value: string; label: React.ReactNode; disabled?: boolean }[]
   value: string
   onChange: (value: string) => void
   placeholder?: string
   className?: string
+  leftIcon?: React.ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -25,7 +27,8 @@ export function DropdownSelect({
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  const selectedLabel = options.find((o) => o.value === value && !o.disabled)?.label || placeholder
+  const selected = options.find((o) => o.value === value && !o.disabled)
+  const selectedLabel = selected ? selected.label : placeholder
 
   return (
     <div className={`relative ${className}`} ref={ref}>
@@ -34,7 +37,10 @@ export function DropdownSelect({
         onClick={() => setOpen((v) => !v)}
         className="w-full border border-gray-300 px-3 py-2 rounded bg-white text-sm flex items-center justify-between gap-2 hover:bg-gray-50"
       >
-        <span className="truncate">{selectedLabel}</span>
+        <span className="truncate flex items-center gap-1.5">
+          {leftIcon}
+          {selectedLabel}
+        </span>
         <svg className="w-4 h-4 text-gray-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>

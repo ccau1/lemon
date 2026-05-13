@@ -188,14 +188,15 @@ export async function ticketPlan(
   );
 }
 
-function parseTasks(raw: string): Array<{ description: string; done: boolean }> {
+function parseTasks(raw: string): Array<{ title: string; description: string; done: boolean }> {
   try {
     const json = JSON.parse(raw);
     if (Array.isArray(json)) {
-      return json.map((t: any) => ({
-        description: String(t.description ?? ""),
-        done: Boolean(t.done ?? false),
-      }));
+      return json.map((t: any) => {
+        const description = String(t.description ?? "");
+        const title = String(t.title ?? description);
+        return { title, description, done: Boolean(t.done ?? false) };
+      });
     }
   } catch {
     // fallback: treat each line as a task
@@ -203,7 +204,7 @@ function parseTasks(raw: string): Array<{ description: string; done: boolean }> 
       .split("\n")
       .map((l) => l.replace(/^[-*\d.\s]+/, "").trim())
       .filter((l) => l.length > 0)
-      .map((l) => ({ description: l, done: false }));
+      .map((l) => ({ title: l, description: l, done: false }));
   }
   return [];
 }
@@ -218,7 +219,7 @@ export async function ticketTasks(
     workspaceId,
     ticketId,
     "tasks",
-    'You are a project manager. Given a plan, break it into a list of implementation tasks. Return ONLY a JSON array like [{"description":"...","done":false}, ...]. Ask clarifying questions if needed.',
+    'You are a project manager. Given a plan, break it into a list of implementation tasks. Return ONLY a JSON array like [{"title":"short title","description":"detailed self-contained description","done":false}, ...]. Ask clarifying questions if needed.',
     "Ticket title: {{title}}\n\nPlease help me break this into tasks.",
     client.saveTasks.bind(client),
     parseTasks

@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import PQueue from "p-queue";
 import { eq, and, or } from "drizzle-orm";
 import type { DB } from "../db/index.js";
@@ -18,6 +17,9 @@ import {
   isTicketArchived,
   deriveCurrentStep as deriveCurrentStepFromFiles,
   clearDownstreamArtifacts,
+  markDownstreamOutdated,
+  clearOutdatedStep,
+  readOutdatedSteps,
   readTicketState,
   writeTicketState,
   readTicketConf,
@@ -28,6 +30,13 @@ import type { EventDispatcher } from "./event-dispatcher.js";
 import type { ActionTriggerService } from "./action-trigger.js";
 
 const stepOrder: WorkflowStep[] = ["spec", "plan", "tasks", "implement", "done"];
+
+class StopError extends Error {
+  constructor() {
+    super("Implementation stopped by user");
+    this.name = "StopError";
+  }
+}
 
 function nextStep(current: WorkflowStep): WorkflowStep {
   const idx = stepOrder.indexOf(current);
@@ -69,7 +78,7 @@ export function stripPreamble(content: string): string {
 export const defaultPrompts: Record<WorkflowStep, string> = {
   spec: "You are an expert product manager. Write a clear, concise product spec in markdown. Use the following sections with ATX headings: # Title, ## Overview, ## In Scope, ## Out of Scope, ## Technical Requirements, ## File Structure, ## Acceptance Criteria. Use bullet lists under each section. Wrap file trees in triple backticks. Use the provided workspace context (README, docs, config files) to keep the spec realistic for the existing codebase. Do not include preamble like 'Here is the final spec:'; output only the markdown. If anything is unclear and you need to ask a clarifying question before writing the spec, respond with ONLY the text \"QUESTION: <your question here>\". Otherwise, write the complete spec.",
   plan: "You are a senior software architect. Given a spec, write a high-level implementation plan in markdown. Use the following sections with ATX headings: # Title, ## Overview, ## Key Files / Changes, ## Step-by-step Implementation, ## Testing Strategy, ## Risks and Considerations. Use bullet lists and numbered lists where appropriate. Wrap file trees or code snippets in triple backticks. Do not include preamble like 'Here is the plan:'; output only the markdown. If anything is unclear and you need to ask a clarifying question before writing the plan, respond with ONLY the text \"QUESTION: <your question here>\". Otherwise, write the complete plan.",
-  tasks: 'You are a project manager. Given a plan, break it into a list of implementation tasks. Return a markdown checklist, one task per line, like:\n- [ ] First task\n- [ ] Second task\nDo not include preamble; output only the markdown checklist. If anything is unclear and you need to ask a clarifying question before writing the tasks, respond with ONLY the text "QUESTION: <your question here>".',
+  tasks: 'You are a project manager. Given a plan, break it into a list of implementation tasks. Each task has a concise title (one line, under 8 words) and a detailed description (indented lines below). The description must be significantly more detailed than the title — include specific file paths, exact values, expected behavior, and constraints. The description must be self-contained so the task can run independently without reading other tasks. Format:\n- [ ] Short task title\n  Detailed description with specifics...\n- [ ] Another short title\n  Its detailed description...\nDo not include preamble; output only the markdown checklist. If anything is unclear and you need to ask a clarifying question before writing the tasks, respond with ONLY the text "QUESTION: <your question here>".',
   implement: "You are a senior engineer. Given the tasks, describe the implementation approach, key code changes, and file names in markdown. Do not include preamble like 'Here is the implementation:'; output only the markdown.",
   done: "",
 };
@@ -126,6 +135,8 @@ export class WorkflowEngine {
   private queues = new Map<string, PQueue>();
   private running = new Map<string, Set<string>>();
   private abortControllers = new Map<string, AbortController>();
+  private stoppedTickets = new Set<string>();
+  private processingTaskIds = new Map<string, Set<string>>();
 
   constructor(
     private getDb: (workspaceId: string) => DB,
@@ -182,11 +193,18 @@ export class WorkflowEngine {
     return this.running.get(workspaceId)!;
   }
 
+  private getProcessingTaskIds(ticketId: string): Set<string> {
+    if (!this.processingTaskIds.has(ticketId)) {
+      this.processingTaskIds.set(ticketId, new Set());
+    }
+    return this.processingTaskIds.get(ticketId)!;
+  }
+
   async queueTicket(workspaceId: string, ticketId: string) {
     const db = this.getDb(workspaceId);
     await db
       .update(tickets)
-      .set({ status: "queued", updatedAt: new Date().toISOString() })
+      .set({ state: "queued", status: "in_progress", updatedAt: new Date().toISOString() })
       .where(eq(tickets.id, ticketId));
     this.broadcast("ticket:queued", { workspaceId, ticketId });
     await this.dispatchStepEvent("ticketQueued", workspaceId, ticketId, "spec");
@@ -208,10 +226,14 @@ export class WorkflowEngine {
     if (ws && isTicketArchived(ws.path, ticketId)) return;
 
     running.add(ticketId);
-    const controller = new AbortController();
-    this.abortControllers.set(ticketId, controller);
+    this.stoppedTickets.delete(ticketId);
+    let controller = this.abortControllers.get(ticketId);
+    if (!controller) {
+      controller = new AbortController();
+      this.abortControllers.set(ticketId, controller);
+    }
 
-    if (ticket.status === "awaiting_actions") {
+    if (ticket.state === "awaiting_actions") {
       return this.resumeTicket(workspaceId, ticketId).finally(() => {
         running.delete(ticketId);
         this.abortControllers.delete(ticketId);
@@ -224,15 +246,19 @@ export class WorkflowEngine {
         if (controller.signal.aborted) return;
         await db
           .update(tickets)
-          .set({ status: "running", updatedAt: new Date().toISOString() })
+          .set({ state: "running", status: "in_progress", updatedAt: new Date().toISOString() })
           .where(eq(tickets.id, ticketId));
         this.broadcast("ticket:running", { workspaceId, ticketId });
-        await this.dispatchStepEvent("ticketRunning", workspaceId, ticketId, (ticket.status as WorkflowStep) || "spec");
+        await this.dispatchStepEvent("ticketRunning", workspaceId, ticketId, (ticket.step as WorkflowStep) || "spec");
         await this.processStep(workspaceId, ticket as any);
       })
       .finally(() => {
         running.delete(ticketId);
-        this.abortControllers.delete(ticketId);
+        const inFlight = this.getProcessingTaskIds(ticketId);
+        if (inFlight.size === 0) {
+          this.abortControllers.delete(ticketId);
+          this.processingTaskIds.delete(ticketId);
+        }
       });
   }
 
@@ -247,7 +273,7 @@ export class WorkflowEngine {
     for (const wsId of targetWorkspaces) {
       const db = this.getDb(wsId);
       const ws = this.workspaces.get(wsId);
-      const allRows = await db.select().from(tickets).where(eq(tickets.status, "queued"));
+      const allRows = await db.select().from(tickets).where(eq(tickets.state, "queued"));
       const queued = ws
         ? allRows.filter((t) => !isTicketArchived(ws.path, t.id))
         : allRows;
@@ -266,27 +292,28 @@ export class WorkflowEngine {
       const rows = await db
         .select()
         .from(tickets)
-        .where(or(eq(tickets.status, "queued"), eq(tickets.status, "running")));
+        .where(or(eq(tickets.state, "queued"), eq(tickets.state, "running")));
 
       if (rows.length === 0) continue;
 
       for (const row of rows) {
         if (isTicketArchived(ws.path, row.id)) continue;
 
-        // Reset any tasks stuck in "processing" back to "queued"
+        // Reset any tasks stuck in "processing" back to "pending" (pipeline was interrupted)
         const taskItems = readTasks(ws.path, row.id);
         if (taskItems && taskItems.some((t) => t.status === "processing")) {
           const resetTasks = taskItems.map((t) =>
-            t.status === "processing" ? { ...t, status: "queued" as const } : t
+            t.status === "processing" ? { ...t, status: "pending" as const } : t
           );
           writeTasks(ws.path, row.id, resetTasks);
         }
+        this.processingTaskIds.delete(row.id);
 
         // If it was running when the server crashed, reset to queued
-        if (row.status === "running") {
+        if (row.state === "running") {
           await db
             .update(tickets)
-            .set({ status: "queued", updatedAt: new Date().toISOString() })
+            .set({ state: "queued", status: "in_progress", updatedAt: new Date().toISOString() })
             .where(eq(tickets.id, row.id));
           this.broadcast("ticket:queued", { workspaceId: ws.id, ticketId: row.id });
         }
@@ -298,20 +325,17 @@ export class WorkflowEngine {
   }
 
   private resolveCurrentStep(
-    ticket: { status: string; currentStep: string | null },
+    ticket: { id: string; step: string },
     workspacePath?: string
   ): WorkflowStep {
-    const status = ticket.status;
-    if (status === "done") return "done";
-    if (status === "queued" || status === "running" || status === "awaiting_review" || status === "awaiting_actions" || status === "error") {
-      if (ticket.currentStep) return ticket.currentStep as WorkflowStep;
-      if (status === "error") {
-        const state = workspacePath ? readTicketState(workspacePath, (ticket as any).id) : {};
-        return (state.errorStep as WorkflowStep) ?? (workspacePath ? deriveCurrentStepFromFiles(workspacePath, (ticket as any).id) : "spec");
+    const step = ticket.step as WorkflowStep;
+    if (step === "done" && workspacePath) {
+      const tasks = readTasks(workspacePath, ticket.id);
+      if (tasks && tasks.some((t) => t.status === "pending" || t.status === "queued" || t.status === "processing")) {
+        return "implement";
       }
-      return workspacePath ? deriveCurrentStepFromFiles(workspacePath, (ticket as any).id) : "spec";
     }
-    return status as WorkflowStep;
+    return step;
   }
 
   private async pauseTicket(
@@ -323,7 +347,7 @@ export class WorkflowEngine {
   ) {
     await db
       .update(tickets)
-      .set({ status: "awaiting_actions", currentStep: step, pendingEvent: event, resumeTarget, updatedAt: new Date().toISOString() })
+      .set({ state: "awaiting_actions", status: "pending", step, pendingEvent: event, resumeTarget, updatedAt: new Date().toISOString() })
       .where(eq(tickets.id, ticketId));
   }
 
@@ -334,13 +358,20 @@ export class WorkflowEngine {
     workspaceId: string
   ) {
     const current = await db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
-    if (current && current.status !== "awaiting_review") {
+    if (current && current.state !== "awaiting_review") {
       await db
         .update(tickets)
-        .set({ status: "awaiting_review", currentStep: step, pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
+        .set({ state: "awaiting_review", status: "pending", step, pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
         .where(eq(tickets.id, ticketId));
     }
     this.broadcast("ticket:awaiting_review", { workspaceId, ticketId, step });
+  }
+
+  private async canAdvanceFromImplement(workspaceId: string, ticketId: string): Promise<boolean> {
+    const ws = this.workspaces.get(workspaceId);
+    if (!ws) return true;
+    const taskItems = readTasks(ws.path, ticketId) ?? [];
+    return !taskItems.some((t) => t.status === "error");
   }
 
   private async advanceTicketStatus(
@@ -348,9 +379,10 @@ export class WorkflowEngine {
     ticketId: string,
     newStep: WorkflowStep
   ) {
+    const isDone = newStep === "done";
     await db
       .update(tickets)
-      .set({ status: newStep, currentStep: newStep, pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
+      .set({ step: newStep, state: isDone ? "done" : "idle", status: isDone ? "done" : "pending", pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
       .where(eq(tickets.id, ticketId));
   }
 
@@ -364,7 +396,7 @@ export class WorkflowEngine {
   ) {
     await db
       .update(tickets)
-      .set({ status: "error", currentStep: step, pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
+      .set({ state: "error", status: "error", step, pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
       .where(eq(tickets.id, ticketId));
     if (workspacePath) {
       writeTicketState(workspacePath, ticketId, { errorStep: step, errorMessage: error.message || String(error) });
@@ -380,11 +412,263 @@ export class WorkflowEngine {
     }
     const running = this.getRunning(workspaceId);
     running.delete(ticketId);
+    this.processingTaskIds.delete(ticketId);
     const db = this.getDb(workspaceId);
     const ticket = await db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
     if (!ticket) throw new Error("Ticket not found");
-    const step = (ticket.currentStep as WorkflowStep) || deriveCurrentStepFromFiles(this.workspaces.get(workspaceId)?.path || "", ticketId);
+    const step = (ticket.step as WorkflowStep) || deriveCurrentStepFromFiles(this.workspaces.get(workspaceId)?.path || "", ticketId);
     await this.setTicketError(db, ticketId, step, new Error("Run cancelled by user"), workspaceId, this.workspaces.get(workspaceId)?.path);
+  }
+
+  async stopImplementation(workspaceId: string, ticketId: string): Promise<void> {
+    const db = this.getDb(workspaceId);
+    const ticket = await db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
+    if (!ticket) throw new Error("Ticket not found");
+    if (ticket.step !== "implement" && ticket.step !== "done") {
+      throw new Error("Ticket is not in implement step");
+    }
+    const controller = this.abortControllers.get(ticketId);
+    if (controller) {
+      this.stoppedTickets.add(ticketId);
+      controller.abort();
+      this.abortControllers.delete(ticketId);
+    }
+    const running = this.getRunning(workspaceId);
+    running.delete(ticketId);
+    const ws = this.workspaces.get(workspaceId);
+
+    if (ws) {
+      const taskItems = readTasks(ws.path, ticketId) ?? [];
+      const resetTasks = taskItems.map((t) =>
+        t.status === "processing" || t.status === "error" || t.status === "queued"
+          ? { ...t, status: "pending" as const, errorMessage: undefined, thoughts: undefined }
+          : t
+      );
+      writeTasks(ws.path, ticketId, resetTasks);
+    }
+    this.processingTaskIds.delete(ticketId);
+
+    await db
+      .update(tickets)
+      .set({ step: "implement", state: "stopped", status: "pending", pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
+      .where(eq(tickets.id, ticketId));
+    if (ws) {
+      writeTicketState(ws.path, ticketId, { errorStep: null, errorMessage: null });
+    }
+    this.broadcast("ticket:stopped", { workspaceId, ticketId });
+  }
+
+  async startImplementation(workspaceId: string, ticketId: string): Promise<void> {
+    const ws = this.workspaces.get(workspaceId);
+    const db = this.getDb(workspaceId);
+    const ticket = await db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
+    if (ws) {
+      const taskItems = readTasks(ws.path, ticketId) ?? [];
+      const needsReset = taskItems.some((t) => t.status === "error" || t.status === "processing" || t.status === "pending");
+      if (needsReset) {
+        const resetTasks = taskItems.map((t) =>
+          t.status === "error" || t.status === "processing" || t.status === "pending"
+            ? { ...t, status: "queued" as const, errorMessage: undefined, thoughts: undefined }
+            : t
+        );
+        writeTasks(ws.path, ticketId, resetTasks);
+      }
+    }
+    this.processingTaskIds.delete(ticketId);
+    if (ticket && ticket.step === "done") {
+      await db
+        .update(tickets)
+        .set({ step: "implement", state: "idle", status: "pending", updatedAt: new Date().toISOString() })
+        .where(eq(tickets.id, ticketId));
+      if (ws) writeTicketState(ws.path, ticketId, { errorStep: null, errorMessage: null });
+    }
+    await this.runTicket(workspaceId, ticketId);
+  }
+
+  async retryTask(workspaceId: string, ticketId: string, taskId: string): Promise<void> {
+    const ws = this.workspaces.get(workspaceId);
+    if (!ws) throw new Error("Workspace not found");
+
+    const taskItems = readTasks(ws.path, ticketId) ?? [];
+    const idx = taskItems.findIndex((t) => t.id === taskId);
+    if (idx === -1) throw new Error("Task not found");
+
+    taskItems[idx] = { ...taskItems[idx], status: "queued" as const, errorMessage: undefined };
+    writeTasks(ws.path, ticketId, taskItems);
+
+    const db = this.getDb(workspaceId);
+    const ticket = await db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
+    if (!ticket) throw new Error("Ticket not found");
+
+    if (ticket.state === "error" || ticket.step === "done") {
+      await db
+        .update(tickets)
+        .set({ step: "implement", state: "idle", status: "pending", updatedAt: new Date().toISOString() })
+        .where(eq(tickets.id, ticketId));
+      writeTicketState(ws.path, ticketId, { errorStep: null, errorMessage: null });
+    }
+
+    this.broadcast("task:updated", {
+      workspaceId,
+      ticketId,
+      taskId,
+      status: "queued",
+    });
+
+    await this.runTicket(workspaceId, ticketId);
+  }
+
+  async recoverTicket(workspaceId: string, ticketId: string): Promise<{ recovered: boolean; message: string }> {
+    const running = this.getRunning(workspaceId);
+    if (running.has(ticketId)) {
+      return { recovered: false, message: "Ticket is actively running" };
+    }
+
+    const db = this.getDb(workspaceId);
+    const ticket = await db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
+    if (!ticket) throw new Error("Ticket not found");
+
+    if (ticket.state !== "running" && ticket.state !== "queued") {
+      return { recovered: false, message: `Ticket state is ${ticket.state}, not stuck` };
+    }
+
+    const ws = this.workspaces.get(workspaceId);
+    if (ws) {
+      const taskItems = readTasks(ws.path, ticketId);
+      if (taskItems && taskItems.some((t) => t.status === "processing")) {
+        const resetTasks = taskItems.map((t) =>
+          t.status === "processing" ? { ...t, status: "pending" as const } : t
+        );
+        writeTasks(ws.path, ticketId, resetTasks);
+      }
+    }
+    this.processingTaskIds.delete(ticketId);
+
+    await db
+      .update(tickets)
+      .set({ state: "queued", status: "in_progress", updatedAt: new Date().toISOString() })
+      .where(eq(tickets.id, ticketId));
+    this.broadcast("ticket:queued", { workspaceId, ticketId });
+
+    this.runTicket(workspaceId, ticketId).catch(() => {});
+    return { recovered: true, message: "Ticket recovered and re-queued" };
+  }
+
+  async validateStartEarly(
+    workspaceId: string,
+    ticketId: string,
+    taskId: string
+  ): Promise<{ allowed: boolean; reason?: string }> {
+    const ws = this.workspaces.get(workspaceId);
+    if (!ws) throw new Error("Workspace not found");
+
+    const taskItems = readTasks(ws.path, ticketId) ?? [];
+    const idx = taskItems.findIndex((t) => t.id === taskId);
+    if (idx === -1) throw new Error("Task not found");
+
+    const earlyTask = taskItems[idx];
+    const priorTasks = taskItems.slice(0, idx);
+
+    const db = this.getDb(workspaceId);
+    const ticket = await db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
+    const model = await this.llm.resolveModel(workspaceId, ticket?.projectId ?? "", "implement");
+    if (!model) return { allowed: true }; // no model configured, allow fallback
+
+    const messages = this.buildStartEarlyValidationPrompt(earlyTask, priorTasks);
+    const signal = this.abortControllers.get(ticketId)?.signal;
+
+    try {
+      const { content } = await this.llm.chat(model, messages, ws.path, signal);
+      const jsonMatch = content.trim().match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return { allowed: true }; // unparseable, default allow
+      const result = JSON.parse(jsonMatch[0]);
+      if (typeof result.allowed === "boolean") {
+        return { allowed: result.allowed, reason: result.reason };
+      }
+      return { allowed: true };
+    } catch {
+      return { allowed: true }; // validation failed, default allow
+    }
+  }
+
+  private buildStartEarlyValidationPrompt(
+    earlyTask: TaskItem,
+    priorTasks: TaskItem[]
+  ): Array<{ role: "system" | "user"; content: string }> {
+    const tableRows = priorTasks
+      .map((t, i) => {
+        const desc = t.description.replace(/\n/g, " ").slice(0, 120);
+        const ellipsis = t.description.length > 120 ? "..." : "";
+        return `| ${i + 1} | ${t.title} | ${desc}${ellipsis} | ${t.status ?? "pending"} |`;
+      })
+      .join("\n");
+
+    return [
+      {
+        role: "system",
+        content:
+          'You are a task dependency analyzer. Given a task that a user wants to start early (run in parallel with incomplete prior tasks) and a list of prior tasks with their statuses, determine if the early task can safely run in parallel. Consider file dependencies, data dependencies, and logical ordering. Respond with ONLY a JSON object: {"allowed":true} or {"allowed":false,"reason":"short reason"}. Be conservative — reject if there is any dependency risk.',
+      },
+      {
+        role: "user",
+        content: `Task to start early:\nTitle: ${earlyTask.title}\nDescription: ${earlyTask.description}\n\nPrior tasks:\n| # | Title | Description | Status |\n|---|-------|-------------|--------|\n${tableRows}\n\nCan the task "${earlyTask.title}" safely run in parallel with any incomplete prior tasks?`,
+      },
+    ];
+  }
+
+  async startTaskEarly(workspaceId: string, ticketId: string, taskId: string): Promise<void> {
+    const ws = this.workspaces.get(workspaceId);
+    if (!ws) throw new Error("Workspace not found");
+
+    const taskItems = readTasks(ws.path, ticketId) ?? [];
+    const idx = taskItems.findIndex((t) => t.id === taskId);
+    if (idx === -1) throw new Error("Task not found");
+    if (taskItems[idx].status !== "queued") {
+      throw new Error("Task is not queued");
+    }
+
+    const db = this.getDb(workspaceId);
+    const ticket = await db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
+    if (!ticket) throw new Error("Ticket not found");
+
+    if (ticket.state === "error") {
+      await db
+        .update(tickets)
+        .set({ step: "implement", state: "idle", status: "pending", updatedAt: new Date().toISOString() })
+        .where(eq(tickets.id, ticketId));
+      writeTicketState(ws.path, ticketId, { errorStep: null, errorMessage: null });
+    }
+
+    // Ensure an abort controller exists so stopImplementation can cancel this task
+    if (!this.abortControllers.has(ticketId)) {
+      this.abortControllers.set(ticketId, new AbortController());
+    }
+
+    if (ticket.state !== "running" && ticket.state !== "queued") {
+      await db
+        .update(tickets)
+        .set({ state: "running", status: "in_progress", updatedAt: new Date().toISOString() })
+        .where(eq(tickets.id, ticketId));
+      this.broadcast("ticket:running", { workspaceId, ticketId });
+    }
+
+    // Start the specific task directly without cancelling prior tasks
+    this.stoppedTickets.delete(ticketId);
+    const runEarly = async () => {
+      try {
+        await this.processSingleTask(workspaceId, ticket as any, taskId, false);
+      } catch {
+        // processSingleTask handles its own error reporting
+      } finally {
+        const items = readTasks(ws.path, ticketId) ?? [];
+        const inFlight = this.getProcessingTaskIds(ticketId);
+        const hasActive = items.some((t) => inFlight.has(t.id) && t.status === "processing");
+        if (!hasActive) {
+          this.processTasks(workspaceId, ticket as any).catch(() => {});
+        }
+      }
+    };
+    runEarly();
   }
 
   private markdownStepHandler(step: Exclude<WorkflowStep, "tasks" | "implement" | "done">) {
@@ -448,7 +732,9 @@ export class WorkflowEngine {
       }
 
       const handler = this.stepHandlers[currentStep];
-      const shouldSkip = ws ? (forceStep !== currentStep && handler.hasArtifact(ws.path, ticket.id)) : false;
+      const outdatedSteps = ws ? readOutdatedSteps(ws.path, ticket.id) : [];
+      const isOutdated = outdatedSteps.includes(currentStep);
+      const shouldSkip = ws ? (forceStep !== currentStep && handler.hasArtifact(ws.path, ticket.id) && !isOutdated) : false;
       let generated = true;
 
       const preRunEvent = `preRun${this.capitalize(currentStep)}` as IntegrationEventName;
@@ -460,6 +746,14 @@ export class WorkflowEngine {
         generated = await handler.generate(workspaceId, ticket, currentStep);
       }
 
+      // Guard: if ticket was stopped during generation, do not advance or pause
+      if (this.stoppedTickets.has(ticket.id)) {
+        return;
+      }
+
+      if (generated && !shouldSkip) {
+        if (ws) clearOutdatedStep(ws.path, ticket.id, currentStep);
+      }
       if (generated) {
         const postRunEvent = `postRun${this.capitalize(currentStep)}` as IntegrationEventName;
         if (await this.dispatchStepEvent(postRunEvent, workspaceId, ticket.id, currentStep)) {
@@ -473,7 +767,7 @@ export class WorkflowEngine {
 
       // implement handler may have already advanced ticket to done
       const afterGen = await db.query.tickets.findFirst({ where: eq(tickets.id, ticket.id) });
-      if (afterGen?.status === "done") return;
+      if (afterGen?.step === "done") return;
 
       if (!autoApprove) {
         await this.setAwaitingReview(db, ticket.id, currentStep, workspaceId);
@@ -487,6 +781,9 @@ export class WorkflowEngine {
       }
 
       const newStep = nextStep(currentStep);
+      if (currentStep === "implement" && !(await this.canAdvanceFromImplement(workspaceId, ticket.id))) {
+        return this.setAwaitingReview(db, ticket.id, currentStep, workspaceId);
+      }
       await this.advanceTicketStatus(db, ticket.id, newStep);
       this.broadcast("ticket:advanced", { workspaceId, ticketId: ticket.id, newStep });
 
@@ -500,10 +797,22 @@ export class WorkflowEngine {
       if (newStep !== "done") {
         const updated = await db.query.tickets.findFirst({ where: eq(tickets.id, ticket.id) });
         if (updated) {
+          if (updated.state !== "running" && updated.state !== "queued") {
+            await db
+              .update(tickets)
+              .set({ state: "running", status: "in_progress", pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
+              .where(eq(tickets.id, ticket.id));
+            this.broadcast("ticket:running", { workspaceId, ticketId: ticket.id });
+            (updated as any).state = "running";
+            (updated as any).status = "in_progress";
+          }
           try { await this.processStep(workspaceId, updated as any); } catch {}
         }
       }
     } catch (e: any) {
+      if (e.name === "StopError") {
+        return;
+      }
       await this.setTicketError(db, ticket.id, currentStep, e, workspaceId, ws?.path);
       throw e;
     }
@@ -523,7 +832,7 @@ export class WorkflowEngine {
 
     const context = await this.buildContext(workspaceId, ticket.id, step);
     const messages = this.buildPrompt(workspaceId, step, ticket.title, ticket.description, context);
-    const threadMessages = await getThreadMessages(ws.path, ticket.id, model.id);
+    const threadMessages = await getThreadMessages(ws.path, ticket.id, model.id, step);
     const signal = this.abortControllers.get(ticket.id)?.signal;
     const callStartedAt = Date.now();
     let content: string;
@@ -539,12 +848,6 @@ export class WorkflowEngine {
     }
     await this.recordStepRun(workspaceId, ticket.id, step, model.id, callStartedAt, durationMs, "done");
     content = this.stripPreamble(content);
-
-    // DEBUG: save stripped content before validation
-    const debugPath = `${ws.path}/.lemon/tickets/${ticket.id}/debug-${step}-${Date.now()}.txt`;
-    try {
-      fs.writeFileSync(debugPath, content, "utf-8");
-    } catch {}
 
     const question = parseQuestion(content);
     if (question) {
@@ -562,8 +865,9 @@ export class WorkflowEngine {
       { role: "assistant", content, modelId: model.id, step },
     ]);
 
-    clearDownstreamArtifacts(ws.path, ticket.id, step);
+    markDownstreamOutdated(ws.path, ticket.id, step);
     writer(ws.path, ticket.id, content);
+    clearOutdatedStep(ws.path, ticket.id, step);
     return { success: true, content };
   }
 
@@ -585,8 +889,10 @@ export class WorkflowEngine {
     writeTasks(
       ws.path,
       ticket.id,
-      taskList.map((t) => ({ id: crypto.randomUUID(), description: t.description, done: t.done, status: "queued" }))
+      taskList.map((t) => ({ id: crypto.randomUUID(), title: t.title, description: t.description, done: t.done, status: "pending" as const }))
     );
+    clearOutdatedStep(ws.path, ticket.id, "tasks");
+    markDownstreamOutdated(ws.path, ticket.id, "tasks");
     return true;
   }
 
@@ -652,20 +958,41 @@ export class WorkflowEngine {
     const ws = this.workspaces.get(workspaceId);
     if (!ws) throw new Error("Workspace not found");
 
+    if (this.stoppedTickets.has(ticket.id)) {
+      return true;
+    }
     let taskItems = readTasks(ws.path, ticket.id) ?? [];
-    const nextTaskIndex = taskItems.findIndex((t) => t.status === "queued");
+    // Convert pending tasks to queued when the pipeline is active
+    const hasPendingTasks = taskItems.some((t) => t.status === "pending");
+    if (hasPendingTasks) {
+      taskItems = taskItems.map((t) =>
+        t.status === "pending" ? { ...t, status: "queued" as const } : t
+      );
+      writeTasks(ws.path, ticket.id, taskItems);
+    }
+    const inFlight = this.getProcessingTaskIds(ticket.id);
+    // If another task is actively processing (e.g., an early-started task running in parallel),
+    // wait until it finishes before picking the next one so we keep the default 1-by-1 queue.
+    const hasActiveProcessing = taskItems.some((t) => inFlight.has(t.id) && t.status === "processing");
+    if (hasActiveProcessing) {
+      return true;
+    }
+    const nextTaskIndex = taskItems.findIndex((t) => t.status === "queued" && !inFlight.has(t.id));
     if (nextTaskIndex === -1) {
+      const hasPending = taskItems.some((t) => t.status === "queued" || t.status === "processing");
+      if (hasPending) return true;
+
       const preRunDonePaused = await this.dispatchStepEvent("preRunDone", workspaceId, ticket.id, "done");
       if (preRunDonePaused) {
         await db
           .update(tickets)
-          .set({ status: "awaiting_actions", currentStep: "done", pendingEvent: "preRunDone", resumeTarget: "processTasks", updatedAt: new Date().toISOString() })
+          .set({ step: "done", state: "awaiting_actions", status: "pending", pendingEvent: "preRunDone", resumeTarget: "processTasks", updatedAt: new Date().toISOString() })
           .where(eq(tickets.id, ticket.id));
         return true;
       }
       await db
         .update(tickets)
-        .set({ status: "done", currentStep: "done", pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
+        .set({ step: "done", state: "idle", status: "done", pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
         .where(eq(tickets.id, ticket.id));
       this.broadcast("ticket:advanced", {
         workspaceId,
@@ -676,7 +1003,7 @@ export class WorkflowEngine {
       if (postRunDonePaused) {
         await db
           .update(tickets)
-          .set({ status: "awaiting_actions", currentStep: "done", pendingEvent: "postRunDone", resumeTarget: "processStep", updatedAt: new Date().toISOString() })
+          .set({ step: "done", state: "awaiting_actions", status: "pending", pendingEvent: "postRunDone", resumeTarget: "processStep", updatedAt: new Date().toISOString() })
           .where(eq(tickets.id, ticket.id));
         return true;
       }
@@ -685,6 +1012,7 @@ export class WorkflowEngine {
     }
 
     const nextTask = taskItems[nextTaskIndex];
+    inFlight.add(nextTask.id);
     taskItems[nextTaskIndex] = { ...nextTask, status: "processing" };
     writeTasks(ws.path, ticket.id, taskItems);
 
@@ -696,26 +1024,92 @@ export class WorkflowEngine {
     });
 
     try {
-      await this.dispatchStepEvent("taskPreRun", workspaceId, ticket.id, "implement", { taskId: nextTask.id });
+      await this.processSingleTask(workspaceId, ticket, nextTask.id);
+    } catch {
+      // processSingleTask handles its own error reporting
+    }
+    return true;
+  }
+
+  private async processSingleTask(
+    workspaceId: string,
+    ticket: { id: string; projectId: string; title: string; description: string },
+    taskId: string,
+    resumeQueue: boolean = true
+  ): Promise<void> {
+    const db = this.getDb(workspaceId);
+    const ws = this.workspaces.get(workspaceId);
+    if (!ws) throw new Error("Workspace not found");
+
+    const inFlight = this.getProcessingTaskIds(ticket.id);
+    if (!inFlight.has(taskId)) {
+      const items = readTasks(ws.path, ticket.id) ?? [];
+      const t = items.find((t) => t.id === taskId);
+      if (!t || t.status !== "queued") return;
+      inFlight.add(taskId);
+    }
+
+    if (this.stoppedTickets.has(ticket.id)) {
+      inFlight.delete(taskId);
+      return;
+    }
+
+    try {
+      let taskItems = readTasks(ws.path, ticket.id) ?? [];
+      const idx = taskItems.findIndex((t) => t.id === taskId);
+      if (idx === -1) return;
+      if (taskItems[idx].status !== "processing") {
+        if (taskItems[idx].status !== "queued") return;
+        taskItems[idx] = { ...taskItems[idx], status: "processing" };
+        writeTasks(ws.path, ticket.id, taskItems);
+      }
+
+      const task = taskItems[idx];
+
+      await this.dispatchStepEvent("taskPreRun", workspaceId, ticket.id, "implement", { taskId });
 
       const model = await this.llm.resolveModel(workspaceId, ticket.projectId, "implement");
       if (!model) throw new Error("No model configured for implement step");
 
       const context = await this.buildContext(workspaceId, ticket.id, "implement");
-      const messages = this.buildTaskPrompt(ticket.title, ticket.description, nextTask.description, context);
-      const threadMessages = await getThreadMessages(ws.path, ticket.id, model.id, "implement");
-      const allMessages: ThreadMessage[] = [...threadMessages, ...messages];
+      const messages = this.buildTaskPrompt(ticket.title, ticket.description, task.description, context);
+      // Tasks are independent: do not accumulate full implement thread history
+      // into every task prompt to avoid unbounded growth and timeouts.
+      const allMessages: ThreadMessage[] = messages;
       const signal = this.abortControllers.get(ticket.id)?.signal;
       const callStartedAt = Date.now();
-      let content: string;
+      let content = "";
       let durationMs: number;
       try {
-        const result = await this.llm.chat(model, allMessages, ws.path, signal);
-        content = result.content;
-        durationMs = result.durationMs;
-      } catch (e) {
+        const stream = await this.llm.chatStream(model, allMessages, ws.path, signal);
+        let buffer = "";
+        let lastBroadcast = Date.now();
+        for await (const chunk of stream) {
+          if (signal?.aborted) break;
+          buffer += chunk;
+          content += chunk;
+          const now = Date.now();
+          if (now - lastBroadcast > 300) {
+            this.broadcast("task:updated", {
+              workspaceId,
+              ticketId: ticket.id,
+              taskId,
+              status: "processing",
+              thoughts: buffer,
+            });
+            lastBroadcast = now;
+          }
+        }
+        if (signal?.aborted) {
+          throw new StopError();
+        }
+        durationMs = Date.now() - callStartedAt;
+      } catch (e: any) {
         durationMs = Date.now() - callStartedAt;
         await this.recordStepRun(workspaceId, ticket.id, "implement", model.id, callStartedAt, durationMs, "error");
+        if (e.message?.includes("Run cancelled by user")) {
+          throw new StopError();
+        }
         throw e;
       }
       await this.recordStepRun(workspaceId, ticket.id, "implement", model.id, callStartedAt, durationMs, "done");
@@ -725,15 +1119,15 @@ export class WorkflowEngine {
         { role: "assistant", content, modelId: model.id, step: "implement" },
       ]);
 
-      // Re-read tasks to avoid clobbering concurrent updates
       taskItems = readTasks(ws.path, ticket.id) ?? [];
-      const idx = taskItems.findIndex((t) => t.id === nextTask.id);
-      if (idx !== -1) {
-        taskItems[idx] = {
-          ...taskItems[idx],
+      const doneIdx = taskItems.findIndex((t) => t.id === taskId);
+      if (doneIdx !== -1) {
+        taskItems[doneIdx] = {
+          ...taskItems[doneIdx],
           status: "done",
           done: true,
           result: content,
+          thoughts: undefined,
         };
         writeTasks(ws.path, ticket.id, taskItems);
       }
@@ -741,25 +1135,36 @@ export class WorkflowEngine {
       this.broadcast("task:updated", {
         workspaceId,
         ticketId: ticket.id,
-        taskId: nextTask.id,
+        taskId,
         status: "done",
         result: content,
       });
 
-      await this.dispatchStepEvent("taskPostRun", workspaceId, ticket.id, "implement", { taskId: nextTask.id, result: content });
+      await this.dispatchStepEvent("taskPostRun", workspaceId, ticket.id, "implement", { taskId, result: content });
 
-      return await this.processTasks(workspaceId, ticket);
+      if (resumeQueue) {
+        await this.processTasks(workspaceId, ticket);
+      }
     } catch (e: any) {
-      // Re-read tasks before updating
-      taskItems = readTasks(ws.path, ticket.id) ?? [];
-      const idx = taskItems.findIndex((t) => t.id === nextTask.id);
-      if (idx !== -1) {
-        taskItems[idx] = {
-          ...taskItems[idx],
+      if (e.name === "StopError") {
+        const items = readTasks(ws.path, ticket.id) ?? [];
+        const errIdx = items.findIndex((t) => t.id === taskId);
+        if (errIdx !== -1) {
+          items[errIdx] = { ...items[errIdx], status: "pending" as const, errorMessage: undefined, thoughts: undefined };
+          writeTasks(ws.path, ticket.id, items);
+        }
+        throw e;
+      }
+      const items = readTasks(ws.path, ticket.id) ?? [];
+      const errIdx = items.findIndex((t) => t.id === taskId);
+      if (errIdx !== -1) {
+        items[errIdx] = {
+          ...items[errIdx],
           status: "error",
           errorMessage: e.message || String(e),
+          thoughts: undefined,
         };
-        writeTasks(ws.path, ticket.id, taskItems);
+        writeTasks(ws.path, ticket.id, items);
       }
 
       await db
@@ -779,7 +1184,7 @@ export class WorkflowEngine {
       this.broadcast("task:updated", {
         workspaceId,
         ticketId: ticket.id,
-        taskId: nextTask.id,
+        taskId,
         status: "error",
         error: e.message || String(e),
       });
@@ -789,9 +1194,11 @@ export class WorkflowEngine {
         step: "implement",
         error: e.message || String(e),
       });
-      await this.dispatchStepEvent("taskError", workspaceId, ticket.id, "implement", { taskId: nextTask.id, error: e.message || String(e) });
+      await this.dispatchStepEvent("taskError", workspaceId, ticket.id, "implement", { taskId, error: e.message || String(e) });
       await this.dispatchStepEvent("ticketError", workspaceId, ticket.id, "implement", { error: e.message || String(e) });
       throw e;
+    } finally {
+      inFlight.delete(taskId);
     }
   }
 
@@ -831,39 +1238,42 @@ export class WorkflowEngine {
     if (!ticket) throw new Error("Ticket not found");
 
     const ws = this.workspaces.get(workspaceId);
-    const completedStep = this.resolveCurrentStep(ticket as any, ws?.path);
+    const completedStep = ticket.step as WorkflowStep;
 
     const preApproveEvent = `preApprove${this.capitalize(completedStep)}` as IntegrationEventName;
     const preApprovePaused = await this.dispatchStepEvent(preApproveEvent, workspaceId, ticketId, completedStep);
     if (preApprovePaused) {
       await db
         .update(tickets)
-        .set({ status: "awaiting_actions", currentStep: completedStep, pendingEvent: preApproveEvent, resumeTarget: trigger, updatedAt: new Date().toISOString() })
+        .set({ state: "awaiting_actions", status: "pending", pendingEvent: preApproveEvent, resumeTarget: trigger, updatedAt: new Date().toISOString() })
         .where(eq(tickets.id, ticketId));
       return db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
     }
 
-    const newStatus = nextStep(completedStep);
+    const newStep = nextStep(completedStep);
+    if (completedStep === "implement" && !(await this.canAdvanceFromImplement(workspaceId, ticketId))) {
+      throw new Error("Cannot advance: tasks have errors");
+    }
     if (ws) writeTicketState(ws.path, ticketId, { errorStep: null, errorMessage: null });
     await db
       .update(tickets)
-      .set({ status: newStatus, currentStep: newStatus, pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
+      .set({ step: newStep, state: "idle", status: newStep === "done" ? "done" : "pending", pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
       .where(eq(tickets.id, ticketId));
 
-    this.broadcast(trigger === "approve" ? "ticket:approved" : "ticket:advanced", { workspaceId, ticketId, newStatus });
+    this.broadcast(trigger === "approve" ? "ticket:approved" : "ticket:advanced", { workspaceId, ticketId, newStep });
 
     const postApproveEvent = `postApprove${this.capitalize(completedStep)}` as IntegrationEventName;
-    const postApprovePaused = await this.dispatchStepEvent(postApproveEvent, workspaceId, ticketId, completedStep, { newStep: newStatus });
+    const postApprovePaused = await this.dispatchStepEvent(postApproveEvent, workspaceId, ticketId, completedStep, { newStep });
     if (postApprovePaused) {
       await db
         .update(tickets)
-        .set({ status: "awaiting_actions", currentStep: newStatus, pendingEvent: postApproveEvent, resumeTarget: trigger, updatedAt: new Date().toISOString() })
+        .set({ step: newStep, state: "awaiting_actions", status: "pending", pendingEvent: postApproveEvent, resumeTarget: trigger, updatedAt: new Date().toISOString() })
         .where(eq(tickets.id, ticketId));
       return db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
     }
 
-    await this.dispatchStepEvent(trigger === "approve" ? "ticketApproved" : "ticketAdvanced", workspaceId, ticketId, completedStep, { newStep: newStatus });
-    if (newStatus !== "done") {
+    await this.dispatchStepEvent(trigger === "approve" ? "ticketApproved" : "ticketAdvanced", workspaceId, ticketId, completedStep, { newStep });
+    if (newStep !== "done") {
       this.runTicket(workspaceId, ticketId).catch(() => {});
     }
     return db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
@@ -880,11 +1290,11 @@ export class WorkflowEngine {
   async resumeTicket(workspaceId: string, ticketId: string) {
     const db = this.getDb(workspaceId);
     const ticket = await db.query.tickets.findFirst({ where: eq(tickets.id, ticketId) });
-    if (!ticket || ticket.status !== "awaiting_actions") return;
+    if (!ticket || ticket.state !== "awaiting_actions") return;
 
     await db
       .update(tickets)
-      .set({ status: "running", pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
+      .set({ state: "running", status: "in_progress", pendingEvent: null, resumeTarget: null, updatedAt: new Date().toISOString() })
       .where(eq(tickets.id, ticketId));
     this.broadcast("ticket:running", { workspaceId, ticketId });
 
@@ -927,7 +1337,7 @@ export class WorkflowEngine {
       if (existing.some((l) => l.status === "error")) {
         await db
           .update(tickets)
-          .set({ status: "error", updatedAt: new Date().toISOString() })
+          .set({ state: "error", status: "error", updatedAt: new Date().toISOString() })
           .where(eq(tickets.id, ticketId));
         return true;
       }
@@ -938,16 +1348,44 @@ export class WorkflowEngine {
     return paused;
   }
 
-  private parseTasks(content: string): Array<{ description: string; done: boolean }> {
-    return content
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => /^[-*]\s+\[[ xX]\]/.test(l))
-      .map((l) => {
-        const done = /^[-*]\s+\[[xX]\]/.test(l);
-        const description = l.replace(/^[-*]\s+\[[ xX]\]\s*/, "").trim();
-        return { description, done };
-      })
-      .filter((t) => t.description.length > 0);
+  private parseTasks(content: string): Array<{ title: string; description: string; done: boolean }> {
+    const lines = content.split("\n");
+    const tasks: Array<{ title: string; description: string; done: boolean }> = [];
+    let current: { title: string; descriptionLines: string[]; done: boolean } | null = null;
+
+    const flush = () => {
+      if (current) {
+        const description = current.descriptionLines.join("\n").trim();
+        tasks.push({
+          title: current.title,
+          description: description || current.title,
+          done: current.done,
+        });
+        current = null;
+      }
+    };
+
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd();
+      const trimmed = line.trim();
+      const match = trimmed.match(/^[-*]\s+\[([ xX])\]\s*(.*)/);
+      if (match) {
+        flush();
+        current = {
+          title: match[2].trim(),
+          descriptionLines: [],
+          done: match[1].toLowerCase() === "x",
+        };
+      } else if (current && line.startsWith("  ")) {
+        current.descriptionLines.push(line.trimStart());
+      } else if (current && trimmed === "") {
+        current.descriptionLines.push("");
+      } else {
+        flush();
+      }
+    }
+    flush();
+
+    return tasks.filter((t) => t.title.length > 0);
   }
 }

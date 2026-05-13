@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import { spawn } from "node:child_process";
 import OpenAI from "openai";
 import type { ModelConfig, WorkflowStep } from "@lemon/shared";
@@ -61,10 +60,11 @@ export class LlmService {
       return [config.modelId, ["--dangerously-skip-permissions", "-p"]];
     }
     if (config.provider === "kimi-code-cli") {
-      // --print: non-interactive mode (implicitly enables auto-approval)
+      // --quiet: non-interactive mode that prints only the final assistant text
+      //          (equivalent to --print --output-format text --final-message-only)
       // --yolo: explicit auto-approval (safeguards against config overriding the CLI flag)
       // --prompt: pass prompt text explicitly so it never gets parsed as a flag
-      return [config.modelId, ["--print", "--yolo", "--prompt"]];
+      return [config.modelId, ["--quiet", "--yolo", "--prompt"]];
     }
     throw new Error(`Unknown CLI provider: ${config.provider}`);
   }
@@ -89,25 +89,26 @@ export class LlmService {
     const prompt = this.formatCliPrompt(messages);
     const [cmd, baseArgs] = this.getCliCommand(config);
     const args = [...baseArgs, prompt];
-    const TIMEOUT_MS = 300_000; // 5 minutes
-    // DEBUG: log exact command being spawned
-    const debugLog = `/tmp/lemon-llm-debug-${Date.now()}.log`;
-    fs.writeFileSync(debugLog, `[LLM DEBUG] Spawning: ${cmd} ${args.map(a => a.length > 50 ? a.slice(0, 50) + "..." : a).join(" ")}\n`);
-    fs.appendFileSync(debugLog, `[LLM DEBUG] cwd: ${workspacePath || process.cwd()}\n`);
-    fs.appendFileSync(debugLog, `[LLM DEBUG] PATH: ${process.env.PATH}\n`);
-    console.error(`[LLM DEBUG] Spawning: ${cmd} ${args.map(a => a.length > 50 ? a.slice(0, 50) + "..." : a).join(" ")}`);
-    console.error(`[LLM DEBUG] cwd: ${workspacePath || process.cwd()}`);
+    const TIMEOUT_MS = 900_000; // 15 minutes
     return new Promise((resolve, reject) => {
       const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], cwd: workspacePath });
       let stdout = "";
       let stderr = "";
       const timeout = setTimeout(() => {
         child.kill("SIGTERM");
+        const killTimeout = setTimeout(() => {
+          child.kill("SIGKILL");
+        }, 5000);
+        child.once("close", () => clearTimeout(killTimeout));
         reject(new Error(`${config.provider} timed out after ${TIMEOUT_MS / 1000}s`));
       }, TIMEOUT_MS);
       const onAbort = () => {
         clearTimeout(timeout);
         child.kill("SIGTERM");
+        const killTimeout = setTimeout(() => {
+          child.kill("SIGKILL");
+        }, 5000);
+        child.once("close", () => clearTimeout(killTimeout));
         reject(new Error("Run cancelled by user"));
       };
       if (signal) {
@@ -137,12 +138,6 @@ export class LlmService {
       child.on("close", (code) => {
         clearTimeout(timeout);
         if (signal) signal.removeEventListener("abort", onAbort);
-        fs.appendFileSync(debugLog, `[LLM DEBUG] Exit code: ${code}\n`);
-        fs.appendFileSync(debugLog, `[LLM DEBUG] Stderr: ${stderr.slice(0, 2000)}\n`);
-        fs.appendFileSync(debugLog, `[LLM DEBUG] Stdout: ${stdout.slice(0, 5000)}\n`);
-        console.error(`[LLM DEBUG] Exit code: ${code}`);
-        console.error(`[LLM DEBUG] Stderr: ${stderr.slice(0, 500)}`);
-        console.error(`[LLM DEBUG] Stdout prefix: ${stdout.slice(0, 200)}`);
         if (code !== 0) {
           reject(new Error(`${config.provider} exited with code ${code}: ${stderr || stdout}`));
         } else {
@@ -199,7 +194,7 @@ export class LlmService {
         if (signal) signal.removeEventListener("abort", onAbort);
       }
       const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
-      if (code !== 0 || stderr) {
+      if (code !== 0) {
         throw new Error(`${config.provider} exited with code ${code}: ${stderr}`);
       }
     })();

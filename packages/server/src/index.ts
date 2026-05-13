@@ -31,6 +31,8 @@ import { themeRoutes } from "./routes/themes.js";
 import { docsRoutes } from "./routes/docs.js";
 import { integrationRoutes } from "./routes/integrations.js";
 import { serverInfoRoutes } from "./routes/server-info.js";
+import { connectionRoutes } from "./routes/connections.js";
+import { DeviceRegistry } from "./config/device-registry.js";
 
 export interface ServerOptions {
   port: number;
@@ -53,6 +55,7 @@ export async function startServer(options: ServerOptions) {
   );
   const modelRegistry = new ModelRegistry(options.dataDir);
   const integrationRegistry = new IntegrationRegistry(options.dataDir);
+  const deviceRegistry = new DeviceRegistry(options.dataDir);
 
   // Seed default model on first bootstrap
   const existingModels = modelRegistry.list();
@@ -108,11 +111,12 @@ export async function startServer(options: ServerOptions) {
 
   await actionRunQueue.recover(workspaceRegistry);
   await actionTriggerService.recoverTickets();
+  await workflowEngine.recover(workspaceRegistry);
 
   // Register routes
-  await workspaceRoutes(app, { registry: workspaceRegistry, dataDir: options.dataDir });
+  await workspaceRoutes(app, { registry: workspaceRegistry, dataDir: options.dataDir, getDb });
   await projectRoutes(app, { dataDir: options.dataDir, registry: workspaceRegistry });
-  await ticketRoutes(app, { getDb, registry: workspaceRegistry, engine: workflowEngine, dispatcher: eventDispatcher });
+  await ticketRoutes(app, { getDb, registry: workspaceRegistry, engine: workflowEngine, dispatcher: eventDispatcher, dataDir: options.dataDir, manager: configManager });
   await modelRoutes(app, { registry: modelRegistry });
   await configRoutes(app, { manager: configManager });
   await workflowRoutes(app, { getDb, llm: llmService, engine: workflowEngine, configManager, broadcast, workspaceRegistry, dispatcher: eventDispatcher });
@@ -121,9 +125,26 @@ export async function startServer(options: ServerOptions) {
   await themeRoutes(app, { dataDir: options.dataDir });
   await docsRoutes(app);
   await integrationRoutes(app, { registry: integrationRegistry });
+  await connectionRoutes(app, { registry: deviceRegistry, port: options.port, configManager, broadcast });
   await serverInfoRoutes(app);
 
   // Health check endpoint
+  // Device gate middleware: exempt health, QR, and browser traffic (no x-device-id)
+  app.addHook("onRequest", async (request, reply) => {
+    const path = request.raw.url || "";
+    const isReconnect = /^\/connection\/devices\/[^/]+\/reconnect/.test(path);
+    if (path === "/health" || path === "/api/health" || path.startsWith("/connection/qr") || path === "/connection/register" || path.startsWith("/connection/devices/me") || isReconnect) {
+      return;
+    }
+    const deviceId = request.headers["x-device-id"] as string | undefined;
+    if (!deviceId) {
+      return; // browser/web clients
+    }
+    if (!deviceRegistry.isApproved(deviceId)) {
+      return reply.status(401).send({ status: "pending_approval" });
+    }
+  });
+
   app.get("/health", async (_request, reply) => {
     return reply.send({ status: "ok" });
   });

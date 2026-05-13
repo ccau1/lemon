@@ -7,10 +7,11 @@ import type { ModelConfig, ActionMessage } from '@lemon/shared'
 import { DropdownSelect } from '../components/Dropdown.tsx'
 import ModelsTab from '../components/ModelsTab.tsx'
 import IntegrationsTab from '../components/IntegrationsTab.tsx'
+import ConnectionsTab from '../components/ConnectionsTab.tsx'
 import PillToggle from '../components/common/PillToggle.tsx'
 
 const steps = ['spec', 'plan', 'tasks', 'implement', 'done'] as const
-const tabs = ['General', 'Workflow', 'Actions', 'Models', 'Integrations'] as const
+const tabs = ['General', 'Workflow', 'Actions', 'Models', 'Integrations', 'Connections'] as const
 
 function normalizeGlobs(raw: string[] | Record<string, string[]> | undefined): Record<string, string[]> {
   if (!raw) return { default: [] }
@@ -844,6 +845,8 @@ export default function SettingsPage() {
           {activeTab === 'Models' && <ModelsTab />}
 
           {activeTab === 'Integrations' && <IntegrationsTab />}
+
+          {activeTab === 'Connections' && <ConnectionsTab />}
         </div>
       </div>
     </div>

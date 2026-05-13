@@ -24,6 +24,7 @@ import {
   isTicketArchived,
   deriveCurrentStep as deriveCurrentStepFromFiles,
   clearDownstreamArtifacts,
+  markDownstreamOutdated,
   readTicketState,
   writeTicketState,
   readTicketConf,
@@ -68,10 +69,11 @@ const saveSpecSchema = z.object({ content: z.string() });
 const savePlanSchema = z.object({ content: z.string() });
 const saveTasksSchema = z.object({
   tasks: z.array(z.object({
+    title: z.string().optional(),
     description: z.string(),
     done: z.boolean(),
     comment: z.string().optional(),
-    status: z.enum(["queued", "processing", "done", "cancelled", "error"]).optional(),
+    status: z.enum(["pending", "queued", "processing", "done", "cancelled", "error"]).optional(),
     errorMessage: z.string().optional(),
     result: z.string().optional(),
   })),
@@ -212,17 +214,18 @@ export async function workflowRoutes(
 
     if (body.revise && (body.step === "spec" || body.step === "plan")) {
       const now = new Date().toISOString();
+      console.log(`[chat] revise=${body.revise} step=${body.step} ticket=${id}`);
       if (body.step === "spec") {
         writeSpec(ws.path, id, content);
-        clearDownstreamArtifacts(ws.path, id, "spec");
+        markDownstreamOutdated(ws.path, id, "spec");
       } else if (body.step === "plan") {
         writePlan(ws.path, id, content);
-        clearDownstreamArtifacts(ws.path, id, "plan");
+        markDownstreamOutdated(ws.path, id, "plan");
       }
       if (ws) writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
-      await db.update(tickets).set({ status: "awaiting_review", updatedAt: now }).where(eq(tickets.id, id));
-      broadcast("ticket:updated", { workspaceId, ticketId: id, step: body.step, newStatus: "awaiting_review" });
-      engine.runTicket(workspaceId, id).catch(() => {});
+      await db.update(tickets).set({ step: body.step, state: "awaiting_review", status: "pending", updatedAt: now }).where(eq(tickets.id, id));
+      broadcast("ticket:updated", { workspaceId, ticketId: id, step: body.step, state: "awaiting_review" });
+      engine.runTicket(workspaceId, id).catch((err) => { console.error(`[chat] runTicket failed`, err); });
     }
 
     const updatedThread = await getThreadMessages(ws.path, id, model.id, body.step);
@@ -288,16 +291,16 @@ export async function workflowRoutes(
 
     if (body.step === "spec") {
       writeSpec(ws.path, id, newContent);
-      clearDownstreamArtifacts(ws.path, id, "spec");
+      markDownstreamOutdated(ws.path, id, "spec");
       if (ws) writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
-      await db.update(tickets).set({ status: "awaiting_review", updatedAt: now }).where(eq(tickets.id, id));
+      await db.update(tickets).set({ state: "awaiting_review", status: "pending", updatedAt: now }).where(eq(tickets.id, id));
       broadcast("ticket:updated", { workspaceId, ticketId: id, step: "spec", newStatus: "awaiting_review" });
       engine.runTicket(workspaceId, id).catch(() => {});
     } else if (body.step === "plan") {
       writePlan(ws.path, id, newContent);
-      clearDownstreamArtifacts(ws.path, id, "plan");
+      markDownstreamOutdated(ws.path, id, "plan");
       if (ws) writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
-      await db.update(tickets).set({ status: "awaiting_review", updatedAt: now }).where(eq(tickets.id, id));
+      await db.update(tickets).set({ state: "awaiting_review", status: "pending", updatedAt: now }).where(eq(tickets.id, id));
       broadcast("ticket:updated", { workspaceId, ticketId: id, step: "plan", newStatus: "awaiting_review" });
       engine.runTicket(workspaceId, id).catch(() => {});
     } else if (body.step === "implement") {
@@ -373,7 +376,7 @@ export async function workflowRoutes(
     writeTasks(ws.path, id, allTasks);
 
     if (ws) writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
-    await db.update(tickets).set({ status: "awaiting_review", updatedAt: now }).where(eq(tickets.id, id));
+    await db.update(tickets).set({ state: "awaiting_review", status: "pending", updatedAt: now }).where(eq(tickets.id, id));
     broadcast("ticket:updated", { workspaceId, ticketId: id, step: "tasks", newStatus: "awaiting_review" });
     engine.runTicket(workspaceId, id).catch(() => {});
 
@@ -409,10 +412,11 @@ export async function workflowRoutes(
     const ws = workspaceRegistry.get(workspaceId);
     if (ws) {
       writeSpec(ws.path, id, body.content);
+      markDownstreamOutdated(ws.path, id, "spec");
       writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
     }
     const now = new Date().toISOString();
-    await db.update(tickets).set({ status: "awaiting_review", updatedAt: now }).where(eq(tickets.id, id));
+    await db.update(tickets).set({ state: "awaiting_review", status: "pending", updatedAt: now }).where(eq(tickets.id, id));
     broadcast("ticket:updated", { workspaceId, ticketId: id, step: "spec", newStatus: "awaiting_review" });
     engine.runTicket(workspaceId, id).catch(() => {});
     return { success: true };
@@ -428,10 +432,11 @@ export async function workflowRoutes(
     const ws = workspaceRegistry.get(workspaceId);
     if (ws) {
       writePlan(ws.path, id, body.content);
+      markDownstreamOutdated(ws.path, id, "plan");
       writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
     }
     const now = new Date().toISOString();
-    await db.update(tickets).set({ status: "awaiting_review", updatedAt: now }).where(eq(tickets.id, id));
+    await db.update(tickets).set({ state: "awaiting_review", status: "pending", updatedAt: now }).where(eq(tickets.id, id));
     broadcast("ticket:updated", { workspaceId, ticketId: id, step: "plan", newStatus: "awaiting_review" });
     engine.runTicket(workspaceId, id).catch(() => {});
     return { success: true };
@@ -451,18 +456,20 @@ export async function workflowRoutes(
         id,
         body.tasks.map((t) => ({
           id: crypto.randomUUID(),
+          title: t.title || t.description,
           description: t.description,
           done: t.done,
           comment: t.comment,
-          status: t.status ?? "queued",
+          status: t.status ?? "pending",
           errorMessage: t.errorMessage,
           result: t.result,
         }))
       );
+      markDownstreamOutdated(ws.path, id, "tasks");
       writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
     }
     const now = new Date().toISOString();
-    await db.update(tickets).set({ status: "awaiting_review", updatedAt: now }).where(eq(tickets.id, id));
+    await db.update(tickets).set({ state: "awaiting_review", status: "pending", updatedAt: now }).where(eq(tickets.id, id));
     broadcast("ticket:updated", { workspaceId, ticketId: id, step: "tasks", newStatus: "awaiting_review" });
     engine.runTicket(workspaceId, id).catch(() => {});
     return { success: true };
@@ -481,7 +488,7 @@ export async function workflowRoutes(
       writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
     }
     const now = new Date().toISOString();
-    await db.update(tickets).set({ status: "awaiting_review", updatedAt: now }).where(eq(tickets.id, id));
+    await db.update(tickets).set({ state: "awaiting_review", status: "pending", updatedAt: now }).where(eq(tickets.id, id));
     broadcast("ticket:updated", { workspaceId, ticketId: id, step: "implement" });
     return { success: true };
   });
@@ -494,7 +501,7 @@ export async function workflowRoutes(
 
     const updatedTicket = await engine.advanceTicket(workspaceId, id);
     if (!updatedTicket) return reply.status(404).send({ error: "Ticket not found" });
-    if (updatedTicket.status === "awaiting_actions") {
+    if (updatedTicket.state === "awaiting_actions") {
       return { success: true, status: "awaiting_actions" };
     }
     return { success: true, newStatus: updatedTicket.status };
@@ -508,7 +515,7 @@ export async function workflowRoutes(
 
     const updatedTicket = await engine.approveTicket(workspaceId, id);
     if (!updatedTicket) return reply.status(404).send({ error: "Ticket not found" });
-    if (updatedTicket.status === "awaiting_actions") {
+    if (updatedTicket.state === "awaiting_actions") {
       return { success: true, status: "awaiting_actions" };
     }
     return { success: true, newStatus: updatedTicket.status };
@@ -546,18 +553,16 @@ export async function workflowRoutes(
     if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
 
     const ws = workspaceRegistry.get(workspaceId);
-    const state = ws ? readTicketState(ws.path, id) : {};
-    let currentStep: WorkflowStep;
-    if (ticket.status === "error" && state.errorStep) {
-      currentStep = state.errorStep as WorkflowStep;
-    } else if (ticket.status === "awaiting_review" || ticket.status === "queued" || ticket.status === "running") {
+    const ticketState = ws ? readTicketState(ws.path, id) : {};
+    let currentStep: WorkflowStep = ticket.step as WorkflowStep;
+    if (ticket.state === "error" && ticketState.errorStep) {
+      currentStep = ticketState.errorStep as WorkflowStep;
+    } else if (ticket.state !== "idle") {
       currentStep = ws ? deriveCurrentStepFromFiles(ws.path, id) : "spec";
-    } else {
-      currentStep = ticket.status as WorkflowStep;
     }
 
     if (ws) writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
-    await db.update(tickets).set({ status: currentStep, updatedAt: new Date().toISOString() }).where(eq(tickets.id, id));
+    await db.update(tickets).set({ step: currentStep, state: "idle", status: "pending", updatedAt: new Date().toISOString() }).where(eq(tickets.id, id));
     broadcast("ticket:rejected", { workspaceId, ticketId: id, step: currentStep });
     await dispatcher?.dispatch("ticketRejected", { workspaceId, ticketId: id, step: currentStep });
 
@@ -574,34 +579,32 @@ export async function workflowRoutes(
     if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
 
     const ws = workspaceRegistry.get(workspaceId);
-    const state = ws ? readTicketState(ws.path, id) : {};
-    let currentStep: WorkflowStep;
-    if (ticket.status === "error" && state.errorStep) {
-      currentStep = state.errorStep as WorkflowStep;
-    } else if (ticket.status === "awaiting_review" || ticket.status === "queued" || ticket.status === "running") {
+    const ticketState = ws ? readTicketState(ws.path, id) : {};
+    let currentStep: WorkflowStep = ticket.step as WorkflowStep;
+    if (ticket.state === "error" && ticketState.errorStep) {
+      currentStep = ticketState.errorStep as WorkflowStep;
+    } else if (ticket.state !== "idle") {
       currentStep = ws ? deriveCurrentStepFromFiles(ws.path, id) : "spec";
-    } else {
-      currentStep = ticket.status as WorkflowStep;
     }
 
-    const newStatus = prevStep(currentStep);
+    const newStep = prevStep(currentStep);
 
     if (ws) {
-      if (newStatus === "spec") {
-        clearDownstreamArtifacts(ws.path, id, "spec");
-      } else if (newStatus === "plan") {
-        clearDownstreamArtifacts(ws.path, id, "plan");
-      } else if (newStatus === "tasks") {
-        clearDownstreamArtifacts(ws.path, id, "tasks");
+      if (newStep === "spec") {
+        markDownstreamOutdated(ws.path, id, "spec");
+      } else if (newStep === "plan") {
+        markDownstreamOutdated(ws.path, id, "plan");
+      } else if (newStep === "tasks") {
+        markDownstreamOutdated(ws.path, id, "tasks");
       }
       writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
     }
 
-    await db.update(tickets).set({ status: newStatus, updatedAt: new Date().toISOString() }).where(eq(tickets.id, id));
-    broadcast("ticket:back", { workspaceId, ticketId: id, newStatus });
-    await dispatcher?.dispatch("ticketBacked", { workspaceId, ticketId: id, step: currentStep, newStatus });
+    await db.update(tickets).set({ step: newStep, state: "idle", status: newStep === "done" ? "done" : "pending", updatedAt: new Date().toISOString() }).where(eq(tickets.id, id));
+    broadcast("ticket:back", { workspaceId, ticketId: id, newStep });
+    await dispatcher?.dispatch("ticketBacked", { workspaceId, ticketId: id, step: currentStep, newStep });
 
-    return { success: true, newStatus };
+    return { success: true, newStep };
   });
 
   fastify.post("/tickets/:id/queue", async (request, reply) => {
@@ -621,8 +624,8 @@ export async function workflowRoutes(
     const ws = workspaceRegistry.get(workspaceId);
     if (ws) writeTicketState(ws.path, id, { errorStep: null, errorMessage: null });
     const db = getDb(workspaceId);
-    await db.update(tickets).set({ status: "spec", updatedAt: new Date().toISOString() }).where(eq(tickets.id, id));
-    broadcast("ticket:updated", { workspaceId, ticketId: id, newStatus: "spec" });
+    await db.update(tickets).set({ step: "spec", state: "idle", status: "pending", updatedAt: new Date().toISOString() }).where(eq(tickets.id, id));
+    broadcast("ticket:updated", { workspaceId, ticketId: id, newStep: "spec" });
     return { success: true };
   });
 
@@ -635,12 +638,12 @@ export async function workflowRoutes(
     const ws = workspaceRegistry.get(workspaceId);
 
     if (ws) {
-      clearDownstreamArtifacts(ws.path, id, body.step);
+      markDownstreamOutdated(ws.path, id, body.step);
       writeTicketState(ws.path, id, { errorStep: null, errorMessage: null, forceStep: body.step });
     }
 
     const db = getDb(workspaceId);
-    await db.update(tickets).set({ status: body.step, updatedAt: new Date().toISOString() }).where(eq(tickets.id, id));
+    await db.update(tickets).set({ step: body.step, state: "idle", status: "pending", updatedAt: new Date().toISOString() }).where(eq(tickets.id, id));
     broadcast("ticket:updated", { workspaceId, ticketId: id, step: body.step });
     engine.runTicket(workspaceId, id).catch(() => {});
     return { success: true };
@@ -655,12 +658,61 @@ export async function workflowRoutes(
     return { success: true };
   });
 
+  fastify.post("/tickets/:id/recover", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { workspaceId } = request.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+    if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
+    const result = await engine.recoverTicket(workspaceId, id);
+    return result;
+  });
+
   fastify.post("/tickets/:id/cancel", async (request, reply) => {
     const { id } = request.params as { id: string };
     const { workspaceId } = request.query as { workspaceId?: string };
     if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
     if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
     await engine.cancelTicketRun(workspaceId, id);
+    return { success: true };
+  });
+
+  fastify.post("/tickets/:id/stop-implement", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { workspaceId } = request.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+    if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
+    await engine.stopImplementation(workspaceId, id);
+    return { success: true };
+  });
+
+  fastify.post("/tickets/:id/start-implement", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { workspaceId } = request.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+    if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
+    await engine.startImplementation(workspaceId, id);
+    return { success: true };
+  });
+
+  fastify.post("/tickets/:id/tasks/:taskId/retry", async (request, reply) => {
+    const { id, taskId } = request.params as { id: string; taskId: string };
+    const { workspaceId } = request.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+    if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
+    await engine.retryTask(workspaceId, id, taskId);
+    return { success: true };
+  });
+
+  fastify.post("/tickets/:id/tasks/:taskId/start-early", async (request, reply) => {
+    const { id, taskId } = request.params as { id: string; taskId: string };
+    const { workspaceId } = request.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: "workspaceId required" });
+    if (checkArchived(id)) return reply.status(400).send({ error: "Ticket is archived" });
+    const validation = await engine.validateStartEarly(workspaceId, id, taskId);
+    if (!validation.allowed) {
+      return reply.status(409).send({ error: validation.reason || "Cannot start this task early due to dependencies" });
+    }
+    await engine.startTaskEarly(workspaceId, id, taskId);
     return { success: true };
   });
 

@@ -8,7 +8,9 @@ async function fetchJson(path: string, init?: RequestInit) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     const msg = err.message || err.error || `HTTP ${res.status}`;
-    throw new Error(msg);
+    const error = new Error(msg) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
   }
   return res.json();
 }
@@ -19,6 +21,12 @@ export const api = {
   getWorkspaces: () => fetchJson("/api/workspaces"),
   createWorkspace: (body: { name: string; path: string }) =>
     fetchJson("/api/workspaces", { method: "POST", body: JSON.stringify(body) }),
+  updateWorkspace: (id: string, body: { name?: string; path?: string }) =>
+    fetchJson(`/api/workspaces/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  cleanupWorkspaceTickets: (workspaceId: string) =>
+    fetchJson(`/api/workspaces/${workspaceId}/cleanup-tickets`, { method: "POST", body: JSON.stringify({}) }),
+  cleanupAllTickets: () =>
+    fetchJson(`/api/tickets/cleanup`, { method: "POST", body: JSON.stringify({}) }),
 
   getProjects: (workspaceId: string) =>
     fetchJson(`/api/projects?workspaceId=${encodeURIComponent(workspaceId)}`),
@@ -55,6 +63,8 @@ export const api = {
     fetchJson(`/api/tickets/${ticketId}/action-linkages?workspaceId=${encodeURIComponent(workspaceId)}`),
   getTicketDetails: (workspaceId: string, ticketId: string) =>
     fetchJson(`/api/tickets/${ticketId}/details?workspaceId=${encodeURIComponent(workspaceId)}`),
+  getTicketLmState: (workspaceId: string, ticketId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/lmstate?workspaceId=${encodeURIComponent(workspaceId)}`),
   advanceTicket: (workspaceId: string, ticketId: string) =>
     fetchJson(`/api/tickets/${ticketId}/advance?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "POST",
@@ -110,7 +120,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ content }),
     }),
-  saveTasks: (workspaceId: string, ticketId: string, tasks: Array<{ description: string; done: boolean; comment?: string }>) =>
+  saveTasks: (workspaceId: string, ticketId: string, tasks: Array<{ title: string; description: string; done: boolean; comment?: string }>) =>
     fetchJson(`/api/tickets/${ticketId}/tasks?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "POST",
       body: JSON.stringify({ tasks }),
@@ -139,6 +149,26 @@ export const api = {
     }),
   cancelTicketRun: (workspaceId: string, ticketId: string) =>
     fetchJson(`/api/tickets/${ticketId}/cancel?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  stopImplementation: (workspaceId: string, ticketId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/stop-implement?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  startImplementation: (workspaceId: string, ticketId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/start-implement?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  retryTask: (workspaceId: string, ticketId: string, taskId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/tasks/${encodeURIComponent(taskId)}/retry?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  startTaskEarly: (workspaceId: string, ticketId: string, taskId: string) =>
+    fetchJson(`/api/tickets/${ticketId}/tasks/${encodeURIComponent(taskId)}/start-early?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "POST",
       body: JSON.stringify({}),
     }),
@@ -200,4 +230,42 @@ export const api = {
     fetchJson(`/api/integrations/${id}/search${q ? `?q=${encodeURIComponent(q)}` : ""}`) as Promise<{
       results: Array<{ id: string; title: string; description: string; url: string }>;
     }>,
+
+  getConnectionQr: (mode?: "local" | "external") =>
+    fetchJson(`/api/connection/qr${mode ? `?mode=${mode}` : ""}`) as Promise<{
+      base64Png: string;
+      url: string;
+      source: "manual" | "upnp" | "public" | "lan";
+      machineId: string;
+      machineName: string;
+    }>,
+
+  getDevices: () =>
+    fetchJson("/api/connection/devices") as Promise<
+      Array<{ id: string; name: string; status: string; createdAt: string; make?: string; model?: string; macAddress?: string }>
+    >,
+
+  approveDevice: (id: string) =>
+    fetchJson(`/api/connection/devices/${encodeURIComponent(id)}/approve`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  rejectDevice: (id: string) =>
+    fetchJson(`/api/connection/devices/${encodeURIComponent(id)}/reject`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  removeDevice: (id: string) =>
+    fetchJson(`/api/connection/devices/${encodeURIComponent(id)}/remove`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  renameDevice: (id: string, name: string) =>
+    fetchJson(`/api/connection/devices/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
 };

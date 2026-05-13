@@ -5,6 +5,8 @@ import { useEffect, useState, useMemo, useCallback } from 'react'
 import type { WorkflowStep } from '@lemon/shared'
 import TicketView from '../components/TicketView.tsx'
 
+const allSteps: WorkflowStep[] = ['spec', 'plan', 'tasks', 'implement', 'done']
+
 const viewTabs: Array<WorkflowStep | 'workflow'> = ['spec', 'plan', 'tasks']
 
 export interface TicketContainerProps {
@@ -17,7 +19,18 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
   const queryClient = useQueryClient()
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['ticketDetails', workspaceId, ticketId],
-    queryFn: () => api.getTicketDetails(workspaceId, ticketId),
+    queryFn: async () => {
+      const result = await api.getTicketDetails(workspaceId, ticketId)
+      const lmState = await api.getTicketLmState(workspaceId, ticketId).catch(() => null)
+      console.log('[TicketContainer] ticketDetails:', {
+        planOutdated: result.plan?.outdated,
+        tasksOutdated: result.tasks?.some((t: any) => t.outdated),
+        taskCount: result.tasks?.length,
+        _debugOutdatedSteps: (result as any)._debugOutdatedSteps,
+        rawLmState: lmState,
+      })
+      return result
+    },
     enabled: !!workspaceId && !!ticketId,
   })
   const { data: actionLinkages } = useQuery({
@@ -34,16 +47,44 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
     queryFn: () => api.getConfigRaw(workspaceId),
     enabled: !!workspaceId,
   })
+  const { data: workspaces } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: api.getWorkspaces,
+  })
+  const workspace = useMemo(() => {
+    return (workspaces || []).find((w: any) => w.id === workspaceId)
+  }, [workspaces, workspaceId])
+
+  const effectiveAutoApprove = useMemo(() => {
+    const global = (globalConfig?.autoApprove || {}) as Record<string, boolean>
+    const workspace = (rawConfig?.autoApprove || {}) as Record<string, boolean>
+    const ticket = (data?.ticket?.autoApprove || {}) as Record<string, boolean>
+    const result: Record<string, boolean> = {}
+    for (const step of allSteps) {
+      if (step in ticket) result[step] = ticket[step]!
+      else if (step in workspace) result[step] = workspace[step]!
+      else result[step] = global[step] ?? false
+    }
+    return result as Record<WorkflowStep, boolean>
+  }, [globalConfig, rawConfig, data?.ticket?.autoApprove])
 
   const effectiveStep = (!isLoading && data?.ticket?.effectiveStep) || 'spec'
   const paramTab = searchParams.get('tab')
   const activeTab: WorkflowStep | 'workflow' = useMemo(() => {
-    if (paramTab && viewTabs.includes(paramTab as any)) return paramTab as WorkflowStep | 'workflow'
+    if (paramTab && viewTabs.includes(paramTab as any)) {
+      const paramIdx = viewTabs.indexOf(paramTab as any)
+      const effIdx = viewTabs.indexOf(effectiveStep as any)
+      if (paramIdx <= effIdx) return paramTab as WorkflowStep | 'workflow'
+      // Allow viewing downstream tabs that have content (outdated or not)
+      if (paramTab === 'plan' && data?.plan?.content) return 'plan'
+      if (paramTab === 'tasks' && data?.tasks?.length) return 'tasks'
+    }
     return effectiveStep
-  }, [paramTab, effectiveStep])
+  }, [paramTab, effectiveStep, data?.plan?.content, data?.tasks])
   const [expandedTab, setExpandedTab] = useState<WorkflowStep | null>(null)
   const [actionError, setActionError] = useState<string>('')
   const [dismissedServerError, setDismissedServerError] = useState(false)
+  const [blockedModal, setBlockedModal] = useState<{ open: boolean; reason: string }>({ open: false, reason: '' })
 
   useEffect(() => {
     setDismissedServerError(false)
@@ -98,6 +139,63 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
     },
     onError: (err: any) => {
       setActionError(err?.message || 'Cancel failed')
+      refetch()
+    },
+  })
+
+  const stopImplement = useMutation({
+    mutationFn: () => api.stopImplementation(workspaceId, ticketId),
+    onSuccess: () => {
+      setActionError('')
+      refetch()
+      queryClient.invalidateQueries({ queryKey: ['tickets'] })
+    },
+    onError: (err: any) => {
+      setActionError(err?.message || 'Stop failed')
+      refetch()
+    },
+  })
+
+  const startImplement = useMutation({
+    mutationFn: () => api.startImplementation(workspaceId, ticketId),
+    onSuccess: () => {
+      setActionError('')
+      refetch()
+      queryClient.invalidateQueries({ queryKey: ['tickets'] })
+    },
+    onError: (err: any) => {
+      setActionError(err?.message || 'Start failed')
+      refetch()
+    },
+  })
+
+  const retryTask = useMutation({
+    mutationFn: (taskId: string) => api.retryTask(workspaceId, ticketId, taskId),
+    onSuccess: () => {
+      setActionError('')
+      refetch()
+      queryClient.invalidateQueries({ queryKey: ['tickets'] })
+    },
+    onError: (err: any) => {
+      setActionError(err?.message || 'Retry failed')
+      refetch()
+    },
+  })
+
+  const startTaskEarly = useMutation({
+    mutationFn: (taskId: string) => api.startTaskEarly(workspaceId, ticketId, taskId),
+    onSuccess: () => {
+      setActionError('')
+      setBlockedModal({ open: false, reason: '' })
+      refetch()
+      queryClient.invalidateQueries({ queryKey: ['tickets'] })
+    },
+    onError: (err: any) => {
+      if (err?.status === 409) {
+        setBlockedModal({ open: true, reason: err?.message || 'This task cannot be started early due to dependencies.' })
+      } else {
+        setActionError(err?.message || 'Start early failed')
+      }
       refetch()
     },
   })
@@ -190,7 +288,7 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
 
   const chat = useMutation({
     mutationFn: (message: string) =>
-      api.chatTicket(workspaceId, ticketId, { step: activeTab, messages: [{ role: 'user', content: message }], revise: true }),
+      api.chatTicket(workspaceId, ticketId, { step: expandedTab || activeTab, messages: [{ role: 'user', content: message }], revise: true }),
     onSuccess: (res) => {
       setChatTurns((prev) => {
         const next = [...prev]
@@ -238,39 +336,76 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
   }
 
   return (
-    <TicketView
-      ticket={data.ticket}
-      spec={data.spec}
-      plan={data.plan}
-      tasks={data.tasks}
-      implementation={data.implementation}
-      activeTab={activeTab}
-      effectiveStep={effectiveStep}
-      errorMessage={(!dismissedServerError && data.ticket?.errorMessage) || actionError}
-      isRunning={data?.ticket?.status === 'running' || data?.ticket?.status === 'queued'}
-      isChatPending={chat.isPending}
-      chatTurns={chatTurns}
-      onSetTab={handleSetTab}
-      onDismissError={() => {
-        if (data.ticket?.errorMessage) setDismissedServerError(true)
-        setActionError('')
-      }}
-      expandedTab={expandedTab}
-      setExpandedTab={setExpandedTab}
-      onApprove={() => approve.mutate()}
-      onSendChat={handleSendChat}
-      onRegenerate={(step) => regenerate.mutate({ step })}
-      onCancelRun={() => cancelRun.mutate()}
-      onUpdateTitle={(title) => updateTitle.mutate(title)}
-      onArchive={() => archive.mutate()}
-      onUnarchive={() => unarchive.mutate()}
-      onDelete={() => deleteTicket.mutate()}
-      stepAutoApprove={(data.ticket?.autoApprove || {}) as Record<WorkflowStep, boolean>}
-      onToggleStepAutoApprove={(step, value) => updateAutoApprove.mutate({ step, value })}
-      actionLinkages={actionLinkages?.linkages || []}
-      ticketTriggers={(data?.ticket?.triggers || {}) as Record<string, string[]>}
-      triggerActions={{ ...(globalConfig?.actions || {}), ...(rawConfig?.actions || {}) }}
-      onToggleTicketTrigger={(event, actionName) => updateTriggers.mutate({ event, actionName })}
-    />
+    <>
+      <TicketView
+        ticket={data.ticket}
+        spec={data.spec}
+        plan={data.plan}
+        tasks={data.tasks}
+        implementation={data.implementation}
+        activeTab={activeTab}
+        effectiveStep={effectiveStep}
+        errorMessage={(!dismissedServerError && data.ticket?.errorMessage) || actionError}
+        isRunning={data?.ticket?.state === 'running' || data?.ticket?.state === 'queued'}
+        isChatPending={chat.isPending}
+        chatTurns={chatTurns}
+        onSetTab={handleSetTab}
+        onDismissError={() => {
+          if (data.ticket?.errorMessage) setDismissedServerError(true)
+          setActionError('')
+        }}
+        expandedTab={expandedTab}
+        setExpandedTab={setExpandedTab}
+        onApprove={() => approve.mutate()}
+        onSendChat={handleSendChat}
+        onRegenerate={(step) => regenerate.mutate({ step })}
+        onCancelRun={() => cancelRun.mutate()}
+        onUpdateTitle={(title) => updateTitle.mutate(title)}
+        onArchive={() => archive.mutate()}
+        onUnarchive={() => unarchive.mutate()}
+        onDelete={() => deleteTicket.mutate()}
+        stepAutoApprove={effectiveAutoApprove}
+        onToggleStepAutoApprove={(step, value) => updateAutoApprove.mutate({ step, value })}
+        onStopImplement={() => stopImplement.mutate()}
+        onStartImplement={() => startImplement.mutate()}
+        onRetryTask={(taskId) => retryTask.mutate(taskId)}
+        onStartTaskEarly={(taskId) => startTaskEarly.mutate(taskId)}
+        startingEarlyTaskId={startTaskEarly.isPending ? (startTaskEarly.variables as string) : undefined}
+        actionLinkages={actionLinkages?.linkages || []}
+        ticketTriggers={(data?.ticket?.triggers || {}) as Record<string, string[]>}
+        triggerActions={{ ...(globalConfig?.actions || {}), ...(rawConfig?.actions || {}) }}
+        onToggleTicketTrigger={(event, actionName) => updateTriggers.mutate({ event, actionName })}
+        workspacePath={workspace?.path}
+        workspaceId={workspaceId}
+        workspaceName={workspace?.name}
+      />
+      {blockedModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }} onClick={() => setBlockedModal({ open: false, reason: '' })}>
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Cannot Start Task Early</h3>
+              <button
+                className="text-gray-400 hover:text-gray-600"
+                onClick={() => setBlockedModal({ open: false, reason: '' })}
+                aria-label="Close"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-sm text-gray-700 mb-6">{blockedModal.reason}</p>
+            <div className="flex justify-end">
+              <button
+                className="px-4 py-2 rounded text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700"
+                onClick={() => setBlockedModal({ open: false, reason: '' })}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }

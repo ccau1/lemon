@@ -8,31 +8,28 @@ import { DropdownFilter, DropdownSelect } from '../components/Dropdown.tsx'
 import Checkbox from '../components/common/Checkbox.tsx'
 import { formatStatus } from '../utils.ts'
 import IntegrationImportButtons from '../components/IntegrationImportButtons.tsx'
+import { ErrorIndicator } from '../components/ticket/ErrorIndicator.tsx'
 
 const stepOrder = ['spec', 'plan', 'tasks', 'implement', 'done'] as const
-const metaStatuses = ['active', 'awaiting_review', 'queued', 'error'] as const
+const metaStatuses = ['pending', 'in_progress', 'error', 'done'] as const
 const views = ['board', 'list', 'cards'] as const
 
 type View = (typeof views)[number]
 
-function statusBadgeClasses(status: string) {
+function statusBadgeClasses(status: string, state?: string) {
+  if (state === 'awaiting_review') return 'bg-yellow-100 text-yellow-800'
   switch (status) {
-    case 'awaiting_review':
-      return 'bg-yellow-100 text-yellow-800'
-    case 'queued':
-      return 'bg-blue-100 text-blue-800'
-    case 'running':
+    case 'pending':
+      return 'bg-gray-100 text-gray-600'
+    case 'in_progress':
       return 'bg-indigo-100 text-indigo-800'
     case 'error':
       return 'bg-red-100 text-red-800'
+    case 'done':
+      return 'bg-green-100 text-green-800'
     default:
       return 'bg-gray-100 text-gray-600'
   }
-}
-
-function deriveDisplayStatus(rawStatus: string) {
-  if (stepOrder.includes(rawStatus as any) || rawStatus === 'running') return 'active'
-  return rawStatus
 }
 
 const LS_KEY = 'tickets_board_new_ticket'
@@ -73,11 +70,13 @@ export default function TicketsBoardPage() {
   const paramSteps = searchParams.get('step')?.split(',').filter(Boolean) || searchParams.get('column')?.split(',').filter(Boolean) || []
   const paramStatuses = searchParams.get('status')?.split(',').filter(Boolean) || []
   const paramView = views.includes(searchParams.get('view') as any) ? (searchParams.get('view') as View) : 'board'
+  const sortKey = searchParams.get('sort') || ''
+  const sortDir = searchParams.get('dir') === 'desc' ? 'desc' : 'asc'
 
   const [selectedWorkspaces, setSelectedWorkspaces] = useState<Set<string>>(new Set(paramWorkspaces))
   const [selectedSteps, setSelectedSteps] = useState<Set<string>>(new Set(paramSteps.length ? paramSteps : stepOrder))
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(new Set(paramStatuses.length ? paramStatuses : metaStatuses))
-  const [selectedProjects] = useState<Set<string>>(new Set(paramProjects))
+  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set(paramProjects))
   const [view, setView] = useState<View>(paramView)
 
   const queryClient = useQueryClient()
@@ -127,6 +126,16 @@ export default function TicketsBoardPage() {
     if (!showModal) return
     writeLs({ workspaceId: modalWorkspaceId, projectId: modalProjectId, title: modalTitle, description: modalDescription, externalSource: modalExternalSource, externalSourceId: modalExternalSourceId })
   }, [modalWorkspaceId, modalProjectId, modalTitle, modalDescription, modalExternalSource, modalExternalSourceId, showModal])
+
+  useEffect(() => {
+    if (!searchParams.has('sort')) {
+      const next = new URLSearchParams(searchParams)
+      next.set('sort', 'createdAt')
+      next.set('dir', 'desc')
+      setSearchParams(next, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const createTicket = useMutation({
     mutationFn: async () => {
@@ -193,6 +202,15 @@ export default function TicketsBoardPage() {
     else updateQuery('archived', null)
   }
 
+  const handleSortChange = (value: string) => {
+    const [key, dir] = value.split('-') as [string, 'asc' | 'desc']
+    const next = new URLSearchParams(searchParams)
+    next.set('sort', key)
+    if (dir === 'desc') next.set('dir', 'desc')
+    else next.delete('dir')
+    setSearchParams(next, { replace: true })
+  }
+
   const openTicketId = searchParams.get('ticket')
   const openTicket = tickets?.find((t: any) => t.id === openTicketId)
   const modalWorkspaceIdRef = useRef<string>('')
@@ -239,6 +257,13 @@ export default function TicketsBoardPage() {
     setSetAndQuery(setSelectedStatuses, 'status', [...metaStatuses], next)
   }
 
+  const toggleProject = (id: string) => {
+    const next = new Set(selectedProjects)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSetAndQuery(setSelectedProjects, 'project', filterProjectOptions.map((p: any) => p.value), next)
+  }
+
   const allNone = (
     setter: React.Dispatch<React.SetStateAction<Set<string>>>,
     key: string,
@@ -255,16 +280,47 @@ export default function TicketsBoardPage() {
   const filteredTickets = useMemo(() => {
     if (!tickets) return []
     return tickets.filter((t: any) => {
-      const displayStatus = deriveDisplayStatus(t.status)
+      const displayStatus = t.status
       const workspaceMatch = selectedWorkspaceId === 'all' ? selectedWorkspaces.has(t.workspaceId) : true
       return (
         workspaceMatch &&
-        selectedSteps.has(t.effectiveStep) &&
+        selectedSteps.has(t.columnStep || t.effectiveStep) &&
         selectedStatuses.has(displayStatus) &&
         (selectedProjects.size === 0 || selectedProjects.has(t.projectId))
       )
     })
   }, [tickets, selectedWorkspaceId, selectedWorkspaces, selectedSteps, selectedStatuses, selectedProjects])
+
+  const sortedTickets = useMemo(() => {
+    if (!sortKey) return filteredTickets
+    const dir = sortDir === 'desc' ? -1 : 1
+    return [...filteredTickets].sort((a: any, b: any) => {
+      let cmp = 0
+      switch (sortKey) {
+        case 'title':
+          cmp = (a.title || '').localeCompare(b.title || '')
+          break
+        case 'workspace':
+          cmp = (a.workspaceName || '').localeCompare(b.workspaceName || '')
+          break
+        case 'step': {
+          const ai = stepOrder.indexOf(a.columnStep || a.effectiveStep)
+          const bi = stepOrder.indexOf(b.columnStep || b.effectiveStep)
+          cmp = (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
+          break
+        }
+        case 'status':
+          cmp = (a.status || '').localeCompare(b.status || '')
+          break
+        case 'createdAt':
+          cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          break
+        default:
+          cmp = 0
+      }
+      return cmp * dir
+    })
+  }, [filteredTickets, sortKey, sortDir])
 
   const workspaceMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -277,9 +333,43 @@ export default function TicketsBoardPage() {
   }, [workspaces])
 
   const workspaceOptions = useMemo(() => (workspaces || []).map((w: any) => ({ value: w.id, label: w.name })), [workspaces])
+  const filterProjectOptions = useMemo(() => {
+    if (!tickets) return []
+    const map = new Map<string, string>()
+    for (const t of tickets as any[]) {
+      if (!map.has(t.projectId)) map.set(t.projectId, t.projectName || t.projectId)
+    }
+    return Array.from(map.entries()).map(([value, label]) => ({ value, label }))
+  }, [tickets])
+  const projectFilter = allNone(setSelectedProjects, 'project', filterProjectOptions.map((p: any) => p.value))
   const projectOptions = useMemo(() => (modalProjects || []).map((p: any) => ({ value: p.id, label: p.name })), [modalProjects])
   const stepOptions = stepOrder.map((s) => ({ value: s, label: s }))
   const statusOptions = metaStatuses.map((s) => ({ value: s, label: formatStatus(s) }))
+
+  const ArrowUp = ({ className = 'w-4 h-4' }: { className?: string }) => (
+    <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 6h6M3 12h12M3 18h18" />
+    </svg>
+  )
+  const ArrowDown = ({ className = 'w-4 h-4' }: { className?: string }) => (
+    <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18M3 12h12M3 18h6" />
+    </svg>
+  )
+
+  const sortOptions = [
+    { value: 'createdAt-desc', label: <span className="flex items-center gap-1"><ArrowDown /> Created At</span> },
+    { value: 'createdAt-asc', label: <span className="flex items-center gap-1"><ArrowUp /> Created At</span> },
+    { value: 'title-asc', label: <span className="flex items-center gap-1"><ArrowUp /> Title</span> },
+    { value: 'title-desc', label: <span className="flex items-center gap-1"><ArrowDown /> Title</span> },
+    { value: 'workspace-asc', label: <span className="flex items-center gap-1"><ArrowUp /> Workspace</span> },
+    { value: 'workspace-desc', label: <span className="flex items-center gap-1"><ArrowDown /> Workspace</span> },
+    { value: 'step-asc', label: <span className="flex items-center gap-1"><ArrowUp /> Step</span> },
+    { value: 'step-desc', label: <span className="flex items-center gap-1"><ArrowDown /> Step</span> },
+    { value: 'status-asc', label: <span className="flex items-center gap-1"><ArrowUp /> Status</span> },
+    { value: 'status-desc', label: <span className="flex items-center gap-1"><ArrowDown /> Status</span> },
+  ]
+  const currentSortValue = sortKey ? `${sortKey}-${sortDir}` : 'createdAt-desc'
 
   if (workspaces && workspaces.length === 0) {
     return (
@@ -333,6 +423,16 @@ export default function TicketsBoardPage() {
             onNone={workspaceFilter.none}
           />
         )}
+        {filterProjectOptions.length > 0 && (
+          <DropdownFilter
+            label="Projects"
+            options={filterProjectOptions}
+            selected={selectedProjects}
+            onToggle={toggleProject}
+            onAll={projectFilter.all}
+            onNone={projectFilter.none}
+          />
+        )}
         <DropdownFilter
           label="Steps"
           options={stepOptions}
@@ -356,27 +456,34 @@ export default function TicketsBoardPage() {
           label="Show archived"
         />
 
-        <div className="ml-auto flex items-center bg-gray-100 rounded p-1">
-          {views.map((v) => (
-            <button
-              key={v}
-              onClick={() => setViewAndQuery(v)}
-              className={`px-3 py-1.5 text-sm rounded capitalize ${view === v ? 'bg-white shadow text-indigo-600 font-medium' : 'text-gray-600 hover:text-gray-900'}`}
-            >
-              {v}
-            </button>
-          ))}
+        <div className="ml-auto flex items-center gap-2">
+          <DropdownSelect
+            options={sortOptions}
+            value={currentSortValue}
+            onChange={handleSortChange}
+          />
+          <div className="flex items-center bg-gray-100 rounded p-1">
+            {views.map((v) => (
+              <button
+                key={v}
+                onClick={() => setViewAndQuery(v)}
+                className={`px-3 py-1.5 text-sm rounded capitalize ${view === v ? 'bg-white shadow text-indigo-600 font-medium' : 'text-gray-600 hover:text-gray-900'}`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       {view === 'board' && (
-        <BoardView tickets={filteredTickets} steps={stepOrder.filter((s) => selectedSteps.has(s))} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
+        <BoardView tickets={sortedTickets} steps={stepOrder.filter((s) => selectedSteps.has(s))} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
       )}
       {view === 'list' && (
-        <ListView tickets={filteredTickets} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
+        <ListView tickets={sortedTickets} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
       )}
       {view === 'cards' && (
-        <CardsView tickets={filteredTickets} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
+        <CardsView tickets={sortedTickets} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
       )}
 
       {openTicketId && (
@@ -421,7 +528,7 @@ export default function TicketsBoardPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
                 <input
-                  className="w-full border border-gray-300 px-3 py-2 rounded"
+                  className="w-full border border-gray-300 px-3 py-2 rounded bg-white text-gray-900"
                   placeholder="Ticket title"
                   value={modalTitle}
                   onChange={(e) => setModalTitle(e.target.value)}
@@ -431,7 +538,7 @@ export default function TicketsBoardPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
                 <textarea
-                  className="w-full border border-gray-300 px-3 py-2 rounded"
+                  className="w-full border border-gray-300 px-3 py-2 rounded bg-white text-gray-900"
                   placeholder="Ticket description"
                   rows={4}
                   value={modalDescription}
@@ -481,7 +588,7 @@ function BoardView({ tickets, steps, workspaceMap, onOpenTicket }: { tickets: an
           </div>
           <div className="space-y-2 overflow-y-auto flex-1">
             {tickets
-              .filter((t: any) => t.effectiveStep === step)
+              .filter((t: any) => (t.columnStep || t.effectiveStep) === step)
               .map((t: any) => <TicketCard key={t.id} t={t} workspaceMap={workspaceMap} onClick={() => onOpenTicket(t.id)} />)}
           </div>
         </div>
@@ -493,11 +600,12 @@ function BoardView({ tickets, steps, workspaceMap, onOpenTicket }: { tickets: an
 function ListView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; workspaceMap: Map<string, string>; onOpenTicket: (id: string) => void }) {
   return (
     <div className="bg-white rounded shadow overflow-hidden">
-      <div className="grid grid-cols-12 gap-4 px-4 py-2 bg-gray-50 text-xs font-bold uppercase text-gray-500">
-        <div className="col-span-5">Title</div>
+      <div className="grid grid-cols-12 gap-4 px-4 py-2 bg-gray-50 text-xs font-bold uppercase text-gray-500 items-center">
+        <div className="col-span-4">Title</div>
         <div className="col-span-2">Workspace</div>
-        <div className="col-span-2">Step</div>
+        <div className="col-span-1">Step</div>
         <div className="col-span-2">Status</div>
+        <div className="col-span-2">Created At</div>
         <div className="col-span-1"></div>
       </div>
       <div className="divide-y">
@@ -507,22 +615,24 @@ function ListView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; wor
             onClick={() => onOpenTicket(t.id)}
             className={`grid grid-cols-12 gap-4 px-4 py-3 items-center cursor-pointer ${t.archivedAt ? 'bg-gray-100 opacity-75' : 'hover:bg-gray-50'}`}
           >
-            <div className="col-span-5 font-medium truncate">
+            <div className="col-span-4 font-medium truncate">
               {t.title}
               {t.externalSource && (
                 <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase tracking-wide">
                   {t.externalSource}
                 </span>
               )}
+              <ErrorIndicator errors={t.errors || []} className="ml-2" />
             </div>
             <div className="col-span-2 text-sm text-gray-600 truncate">{workspaceMap.get(t.workspaceId) || t.workspaceName || 'Unknown'}</div>
-            <div className="col-span-2 text-sm capitalize">{t.effectiveStep}</div>
+            <div className="col-span-1 text-sm capitalize">{t.columnStep || t.effectiveStep}</div>
             <div className="col-span-2">
-              <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status)}`}>
-                {formatStatus(t.status)}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status, t.state)}`}>
+                {formatStatus(t.status, t.state)}
               </span>
               {t.archivedAt && <span className="ml-2 text-[10px] text-gray-500 uppercase tracking-wide">Archived</span>}
             </div>
+            <div className="col-span-2 text-sm text-gray-500">{new Date(t.createdAt).toLocaleDateString()}</div>
             <div className="col-span-1 text-right">
               <span className="text-indigo-600 text-sm hover:underline">Open</span>
             </div>
@@ -552,11 +662,16 @@ function CardsView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; wo
           </div>
           <div className="flex items-center justify-between">
             <span className="text-xs text-gray-500 truncate">{workspaceMap.get(t.workspaceId) || t.workspaceName || 'Unknown'}</span>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status)}`}>
-              {formatStatus(t.status)}
-            </span>
+            <div className="flex items-center gap-1.5">
+              <ErrorIndicator errors={t.errors || []} />
+              <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status, t.state)}`}>
+                {formatStatus(t.status, t.state)}
+              </span>
+            </div>
           </div>
-          <div className="mt-2 text-xs text-gray-400 capitalize">{t.effectiveStep}</div>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-gray-400 capitalize">{t.columnStep || t.effectiveStep}</span>
+          </div>
           {t.archivedAt && <div className="mt-1 text-[10px] text-gray-500 uppercase tracking-wide">Archived</div>}
         </div>
       ))}
@@ -580,9 +695,12 @@ function TicketCard({ t, workspaceMap, onClick }: { t: any; workspaceMap: Map<st
       </div>
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-gray-500 truncate">{workspaceMap.get(t.workspaceId) || t.workspaceName || 'Unknown'}</span>
-        <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status)}`}>
-          {formatStatus(t.status)}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <ErrorIndicator errors={t.errors || []} />
+          <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status)}`}>
+            {formatStatus(t.status)}
+          </span>
+        </div>
       </div>
       {t.archivedAt && (
         <div className="mt-1 text-[10px] text-gray-500 uppercase tracking-wide">Archived</div>

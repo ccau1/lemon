@@ -78,7 +78,7 @@ export default function WorkspacesPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
                 <input
-                  className="border px-3 py-2 rounded w-full"
+                  className="border border-gray-300 bg-white text-gray-900 px-3 py-2 rounded w-full focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   placeholder="Workspace name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -87,7 +87,7 @@ export default function WorkspacesPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Path</label>
                 <input
-                  className="border px-3 py-2 rounded w-full"
+                  className="border border-gray-300 bg-white text-gray-900 px-3 py-2 rounded w-full focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   placeholder="/path/to/project"
                   value={path}
                   onChange={(e) => setPath(e.target.value)}

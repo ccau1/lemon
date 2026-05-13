@@ -4,6 +4,8 @@ export interface ActionMessage {
 }
 
 export type WorkflowStep = "spec" | "plan" | "tasks" | "implement" | "done";
+export type TicketState = "idle" | "queued" | "running" | "awaiting_review" | "awaiting_actions" | "error" | "stopped" | "done";
+export type TicketStatus = "pending" | "in_progress" | "error" | "done";
 
 export interface Workspace {
   id: string;
@@ -26,8 +28,10 @@ export interface Ticket {
   projectId: string;
   title: string;
   description: string;
-  status: WorkflowStep | "awaiting_review" | "awaiting_actions" | "queued" | "running" | "error";
-  currentStep?: string;
+  status: TicketStatus;
+  step: WorkflowStep;
+  state: TicketState;
+  currentStep?: string; // deprecated — kept for backward compat
   pendingEvent?: string;
   resumeTarget?: string;
   externalSource?: string;
@@ -60,11 +64,12 @@ export interface Plan {
 export interface TaskItem {
   id: string;
   ticketId: string;
+  title: string;
   description: string;
   done: boolean;
   comment?: string;
   outdated?: boolean;
-  status?: "queued" | "processing" | "done" | "cancelled" | "error";
+  status?: "pending" | "queued" | "processing" | "done" | "cancelled" | "error";
   errorMessage?: string;
   result?: string;
   createdAt: string;
@@ -115,4 +120,5 @@ export interface Settings {
   theme: string;
   stepModelOverrides: Record<string, Partial<Record<WorkflowStep, string>>>;
   triggers: Record<string, string[]>;
+  externalUrl?: string;
 }

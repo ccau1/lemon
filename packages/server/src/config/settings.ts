@@ -88,6 +88,7 @@ export class ConfigManager {
       theme: workspace.theme ?? global.theme,
       stepModelOverrides: this.mergeStepModelOverrides(global.stepModelOverrides, workspace.stepModelOverrides),
       triggers: { ...global.triggers, ...workspace.triggers },
+      externalUrl: workspace.externalUrl ?? global.externalUrl,
     };
   }
 
@@ -132,6 +133,9 @@ export class ConfigManager {
       }
       if (partial.triggers !== undefined) {
         result.triggers = { ...result.triggers, ...partial.triggers };
+      }
+      if (partial.externalUrl !== undefined) {
+        result.externalUrl = partial.externalUrl;
       }
     }
     return result;
@@ -206,6 +210,10 @@ export class ConfigManager {
 
   private parse(raw: Record<string, unknown>): Settings {
     if (raw.theme === "default") raw.theme = "dark";
+    // Strip null values so optional fields don't fail validation on stale configs
+    for (const key of Object.keys(raw)) {
+      if (raw[key] === null) delete raw[key];
+    }
     return settingsSchema.parse(raw);
   }
 

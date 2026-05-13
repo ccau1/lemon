@@ -27,6 +27,7 @@ import {
 } from "./commands/ticket.js";
 import { modelList, modelAdd, modelDefault, modelDefaultAll } from "./commands/model.js";
 import { configGet, configSet } from "./commands/config.js";
+import { connectionQr } from "./commands/connection.js";
 
 const program = new Command();
 program.name("lemon").description("AI SDD Workflow CLI").version("0.1.0");
@@ -285,5 +286,15 @@ configCmd
   .action(async (key, value, opts) =>
     configSet(getClient(), key, value, resolveWorkspaceId(opts.workspace))
   );
+
+// connection
+const connectionCmd = program
+  .command("connection")
+  .description("Manage remote connections");
+
+connectionCmd
+  .command("qr")
+  .description("Display QR code for mobile connection")
+  .action(async () => connectionQr(getClient()));
 
 program.parse();

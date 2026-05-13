@@ -106,7 +106,7 @@ export class ApiClient {
   saveTasks(
     workspaceId: string,
     ticketId: string,
-    tasks: Array<{ description: string; done: boolean }>
+    tasks: Array<{ title: string; description: string; done: boolean }>
   ) {
     return this.fetch(
       `/tickets/${ticketId}/tasks?workspaceId=${encodeURIComponent(workspaceId)}`,
@@ -175,5 +175,14 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ workspaceId, parallel: true, allWorkspaces }),
     });
+  }
+
+  getConnectionQr() {
+    return this.fetch("/api/connection/qr") as Promise<{
+      base64Png: string;
+      url: string;
+      machineId: string;
+      machineName: string;
+    }>;
   }
 }

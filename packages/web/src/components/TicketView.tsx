@@ -1,6 +1,7 @@
 import type { WorkflowStep } from '@lemon/shared'
 import { integrationEvents } from '@lemon/shared'
 import { useRef, useEffect, useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { formatStatus } from '../utils.ts'
 import MarkdownSections from './MarkdownSections.tsx'
 import PillToggle from './common/PillToggle.tsx'
@@ -9,6 +10,7 @@ import { TicketActionsMenu } from './ticket/TicketActionsMenu.tsx'
 import { TasksPanel } from './ticket/TasksPanel.tsx'
 import { ChatPanel } from './ticket/ChatPanel.tsx'
 import { markdownWrapClasses, MarkdownSection } from './ticket/MarkdownSection.tsx'
+import { ErrorIndicator } from './ticket/ErrorIndicator.tsx'
 
 const viewTabs: Array<WorkflowStep | 'workflow'> = ['spec', 'plan', 'tasks']
 
@@ -42,6 +44,13 @@ export interface TicketViewProps {
   ticketTriggers?: Record<string, string[]>
   triggerActions?: Record<string, any>
   onToggleTicketTrigger?: (event: string, actionName: string) => void
+  onStopImplement?: () => void
+  onStartImplement?: () => void
+  onRetryTask?: (taskId: string) => void
+  onStartTaskEarly?: (taskId: string) => void
+  workspacePath?: string
+  workspaceId?: string
+  workspaceName?: string
 }
 
 export default function TicketView({
@@ -74,10 +83,17 @@ export default function TicketView({
   ticketTriggers,
   triggerActions,
   onToggleTicketTrigger,
+  onStopImplement,
+  onStartImplement,
+  onRetryTask,
+  onStartTaskEarly,
+  workspacePath,
+  workspaceId,
+  workspaceName,
 }: TicketViewProps) {
   const isArchived = !!ticket.archivedAt
-  const isLocked = ticket.status === 'implement' || ticket.status === 'done'
-  const showApprovalActions = ticket.status === 'awaiting_review' && expandedTab === effectiveStep && !isArchived
+  const isLocked = ticket.step === 'implement' || ticket.step === 'done'
+  const showApprovalActions = ticket.state === 'awaiting_review' && expandedTab === effectiveStep && !isArchived
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [editedTitle, setEditedTitle] = useState(ticket.title)
   const [chatOpen, setChatOpen] = useState(true)
@@ -100,6 +116,7 @@ export default function TicketView({
   const markdownEls = useRef<Partial<Record<WorkflowStep, HTMLDivElement | null>>>({})
   const [savedScrollRatio, setSavedScrollRatio] = useState(0)
   const [expandedComment, setExpandedComment] = useState('')
+  const [descriptionModalOpen, setDescriptionModalOpen] = useState(false)
   const expandedTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -192,9 +209,28 @@ export default function TicketView({
             )}
           </div>
           {ticket.description && (
-            <div className="text-sm text-gray-700 mt-1 whitespace-pre-wrap">{ticket.description}</div>
+            <div
+              className="text-sm text-gray-700 mt-1 whitespace-pre-wrap line-clamp-3 cursor-pointer hover:text-indigo-600"
+              onClick={() => setDescriptionModalOpen(true)}
+              title="Click to view full description"
+            >
+              {ticket.description}
+            </div>
           )}
-          <div className="text-sm text-gray-500 uppercase tracking-wide mt-1">{formatStatus(ticket.status)}</div>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-sm text-gray-500 uppercase tracking-wide">{formatStatus(ticket.status)}</span>
+            <ErrorIndicator errors={ticket.errors || []} />
+          </div>
+          {workspaceName && workspaceId && (
+            <div className="text-xs mt-1">
+              <Link to={`/workspace/${workspaceId}`} className="text-indigo-600 hover:underline">
+                {workspaceName}
+              </Link>
+              {workspacePath && (
+                <span className="text-gray-400 ml-1" title={workspacePath}>({workspacePath})</span>
+              )}
+            </div>
+          )}
           {isArchived && <div className="text-xs text-gray-400 mt-1">Archived</div>}
         </div>
         <div className="flex gap-2 flex-shrink-0">
@@ -224,6 +260,22 @@ export default function TicketView({
         </div>
       )}
 
+      {ticket.errors && ticket.errors.length > 0 && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded p-3">
+          <div className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-2">Errors</div>
+          <ul className="space-y-2">
+            {ticket.errors.map((e: any, i: number) => (
+              <li key={i} className="text-sm text-red-700">
+                <span className="font-medium capitalize">{e.type.replace('_', ' ')}</span>
+                {e.step && <span className="text-red-500 ml-1">({e.step})</span>}
+                {e.taskId && <span className="text-red-500 ml-1">[{e.taskId.slice(0, 8)}]</span>}
+                <span className="block text-red-600">{e.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="flex border-b border-gray-200 mb-4">
         {viewTabs.map((step) => (
           <button
@@ -236,7 +288,7 @@ export default function TicketView({
             }`}
           >
             <StatusIcon
-              status={ticket.status}
+              status={ticket.state}
               step={step}
               effectiveStep={effectiveStep}
               outdated={step === 'plan' ? plan?.outdated : step === 'tasks' ? tasks?.some((t) => t.outdated) : false}
@@ -258,6 +310,7 @@ export default function TicketView({
                 content={spec?.content}
                 step="spec"
                 ticketStatus={ticket.status}
+                ticketState={ticket.state}
                 effectiveStep={effectiveStep}
                 isRunning={_isRunning}
                 isChatPending={isChatPending}
@@ -281,6 +334,7 @@ export default function TicketView({
                 outdated={plan?.outdated}
                 step="plan"
                 ticketStatus={ticket.status}
+                ticketState={ticket.state}
                 effectiveStep={effectiveStep}
                 isRunning={_isRunning}
                 isChatPending={isChatPending}
@@ -303,10 +357,15 @@ export default function TicketView({
                 outdated={tasks?.some((t) => t.outdated)}
                 autoApprove={stepAutoApprove?.tasks}
                 onToggleAutoApprove={(v) => onToggleStepAutoApprove?.('tasks', v)}
-                ticketStatus={ticket.status}
+                ticketState={ticket.state}
                 effectiveStep={effectiveStep}
                 isArchived={isArchived}
                 onApprove={onApprove}
+                onStopImplement={onStopImplement}
+                onStartImplement={onStartImplement}
+                onRetryTask={onRetryTask}
+                onStartTaskEarly={onStartTaskEarly}
+                isRunning={_isRunning}
               />
             )}
             {activeTab === 'workflow' && (
@@ -451,7 +510,7 @@ export default function TicketView({
                   ?.slice('QUESTION:'.length)
                   .trim()
                 return (
-                  <div className={markdownWrapClasses + ' min-h-0'}>
+                  <div className={markdownWrapClasses + ' min-h-[100px]'}>
                     {expandedContent ? (
                       <MarkdownSections content={expandedContent} />
                     ) : expandedQuestion ? (
@@ -469,7 +528,7 @@ export default function TicketView({
               })()}
             </div>
           </div>
-          {onSendChat && expandedTab !== 'tasks' && !(expandedTab === 'plan' && plan?.outdated) && !isArchived && (
+          {onSendChat && expandedTab !== 'tasks' && !(expandedTab === 'plan' && plan?.outdated) && !isArchived && ticket.state !== 'done' && (
             <div className="shrink-0 p-6 border-t bg-white">
               <div className="max-w-5xl mx-auto flex items-center gap-3">
                 <div className="flex-1 relative">
@@ -482,7 +541,8 @@ export default function TicketView({
                     placeholder={(() => {
                       if (isChatPending) return 'Revising...'
                       if (isArchived) return 'Archived'
-                      if (!(ticket.status === 'awaiting_review' || ticket.status === 'error')) return 'Processing...'
+                      const canChat = ticket.status !== 'done'
+                      if (!canChat) return 'Done'
                       const expandedQuestion = chatTurns
                         ?.slice()
                         .reverse()
@@ -495,7 +555,7 @@ export default function TicketView({
                       return `Comment on how to revise this ${expandedTab}...`
                     })()}
                     value={expandedComment}
-                    disabled={isChatPending || _isRunning || !(ticket.status === 'awaiting_review' || ticket.status === 'error')}
+                    disabled={isChatPending || ticket.status === 'done'}
                     onChange={(e) => setExpandedComment(e.target.value)}
                     onKeyDown={(e) => {
                       if (
@@ -503,8 +563,7 @@ export default function TicketView({
                         !e.shiftKey &&
                         expandedComment.trim() &&
                         !isChatPending &&
-                        !_isRunning &&
-                        (ticket.status === 'awaiting_review' || ticket.status === 'error')
+                        ticket.status !== 'done'
                       ) {
                         e.preventDefault()
                         onSendChat(expandedComment.trim())
@@ -540,6 +599,30 @@ export default function TicketView({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {descriptionModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setDescriptionModalOpen(false) }}
+        >
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden relative">
+            <button
+              className="absolute top-4 right-4 p-2 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-800 z-10"
+              onClick={() => setDescriptionModalOpen(false)}
+              aria-label="Close"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <div className="flex-1 overflow-y-auto p-6 pt-14">
+              <h2 className="text-lg font-semibold mb-4">{ticket.title}</h2>
+              <div className="text-sm text-gray-700 whitespace-pre-wrap">{ticket.description}</div>
+            </div>
+          </div>
         </div>
       )}
     </div>

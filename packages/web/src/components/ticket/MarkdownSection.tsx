@@ -5,7 +5,7 @@ import PillToggle from '../common/PillToggle.tsx'
 import { ExpandIcon } from './StatusIcon.tsx'
 
 export const markdownWrapClasses =
-  'text-sm bg-gray-50 p-3 rounded min-h-[100px] [&_h1]:text-xl [&_h1]:font-bold [&_h1]:mb-3 [&_h1]:mt-2 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mb-2 [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mb-2 [&_h3]:mt-3 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-3 [&_li]:mb-1 [&_code]:bg-gray-200 [&_code]:px-1 [&_code]:rounded [&_code]:text-xs [&_pre]:bg-gray-200 [&_pre]:p-2 [&_pre]:rounded [&_pre]:overflow-x-auto [&_pre]:whitespace-pre [&_pre]:mb-3 [&_a]:text-indigo-600 [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:mb-3'
+  'text-sm bg-gray-50 p-3 rounded min-h-[100px] text-gray-900 [&_h1]:text-xl [&_h1]:font-bold [&_h1]:mb-3 [&_h1]:mt-2 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mb-2 [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mb-2 [&_h3]:mt-3 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-3 [&_li]:mb-1 [&_code]:bg-gray-200 [&_code]:px-1 [&_code]:rounded [&_code]:text-xs [&_pre]:bg-gray-200 [&_pre]:p-2 [&_pre]:rounded [&_pre]:overflow-x-auto [&_pre]:whitespace-pre [&_pre]:mb-3 [&_a]:text-indigo-600 [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:mb-3'
 
 export interface MarkdownSectionProps {
   title: string
@@ -13,6 +13,7 @@ export interface MarkdownSectionProps {
   outdated?: boolean
   step: WorkflowStep
   ticketStatus: string
+  ticketState?: string
   effectiveStep: WorkflowStep
   isRunning?: boolean
   isChatPending?: boolean
@@ -35,6 +36,7 @@ export function MarkdownSection({
   outdated,
   step,
   ticketStatus,
+  ticketState,
   effectiveStep,
   isRunning,
   isChatPending,
@@ -53,9 +55,12 @@ export function MarkdownSection({
   const [comment, setComment] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const markdownRef = useRef<HTMLDivElement>(null)
-  const showApprove = ticketStatus === 'awaiting_review' && step === effectiveStep && !outdated && !isArchived
-  const canComment = (ticketStatus === 'awaiting_review' || ticketStatus === 'error') && !isArchived
-  const isBusy = isChatPending || isRunning || !canComment
+  const state = ticketState || ticketStatus
+  const showApprove = state === 'awaiting_review' && step === effectiveStep && !outdated && !isArchived
+  const canComment = (step === 'spec' || step === 'plan')
+    ? ticketStatus !== 'done' && !isArchived
+    : (state === 'awaiting_review' || state === 'error') && !isArchived
+  const isBusy = isChatPending || (step !== 'spec' && step !== 'plan' && isRunning) || !canComment
   const lastQuestion = chatTurns
     ?.slice()
     .reverse()
@@ -63,7 +68,7 @@ export function MarkdownSection({
     ?.assistant
     ?.slice('QUESTION:'.length)
     .trim()
-  const hasContent = !!content
+  const hasContent = !!content?.trim()
 
   useEffect(() => {
     const el = textareaRef.current
@@ -125,7 +130,7 @@ export function MarkdownSection({
               onClick={() => onRegenerate(step)}
               aria-label="Regenerate"
               title="Regenerate"
-              disabled={isRunning}
+              disabled={isRunning || step !== effectiveStep}
             >
               <svg className={`w-4 h-4 ${isRunning ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -143,9 +148,9 @@ export function MarkdownSection({
           </button>
         </div>
       </div>
-      <div ref={setMarkdownRef} className={`${markdownWrapClasses} flex-1 overflow-y-auto min-h-0 scrollbar-hide`}>
+      <div ref={setMarkdownRef} className={`${markdownWrapClasses} flex-1 overflow-y-auto min-h-[100px] scrollbar-hide`}>
         {hasContent ? (
-          <MarkdownSections content={content} />
+          <MarkdownSections content={content!} />
         ) : lastQuestion ? (
           <div className="flex flex-col items-center justify-center h-full text-center p-8">
             <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-6 max-w-lg w-full">
@@ -163,7 +168,7 @@ export function MarkdownSection({
           This {title.toLowerCase()} is outdated because an upstream artifact was edited. It will be regenerated when you continue the workflow.
         </div>
       )}
-      {onSendChat && !outdated && (
+      {onSendChat && !outdated && ticketState !== 'done' && (
         <div className="mt-4 shrink-0 relative">
           <textarea
             ref={textareaRef}

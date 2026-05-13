@@ -14,16 +14,21 @@ export const workflowStepSchema = z.enum([
 ]);
 
 export const ticketStatusSchema = z.enum([
-  "spec",
-  "plan",
-  "tasks",
-  "implement",
+  "pending",
+  "in_progress",
+  "error",
   "done",
-  "awaiting_review",
-  "awaiting_actions",
+]);
+
+export const ticketStateSchema = z.enum([
+  "idle",
   "queued",
   "running",
+  "awaiting_review",
+  "awaiting_actions",
   "error",
+  "stopped",
+  "done",
 ]);
 
 export const workspaceSchema = z.object({
@@ -48,6 +53,8 @@ export const ticketSchema = z.object({
   title: z.string(),
   description: z.string(),
   status: ticketStatusSchema,
+  step: workflowStepSchema,
+  state: ticketStateSchema,
   currentStep: z.string().optional(),
   pendingEvent: z.string().optional(),
   resumeTarget: z.string().optional(),
@@ -122,4 +129,5 @@ export const settingsSchema = z.object({
   theme: z.string().default("dark"),
   stepModelOverrides: z.record(z.string(), z.record(workflowStepSchema, z.string())).default({}),
   triggers: z.record(z.string(), z.array(z.string())).default({}),
+  externalUrl: z.string().optional(),
 });

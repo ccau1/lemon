@@ -1,0 +1,13 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@lemon/shared": ["../shared/src/index.ts"],
+      "@lemon/shared-ui": ["../shared-ui/src/index.native.ts"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}

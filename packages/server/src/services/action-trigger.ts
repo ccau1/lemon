@@ -128,7 +128,7 @@ export class ActionTriggerService {
     for (const ws of this.workspaces.list()) {
       const db = this.getDb(ws.id);
       const stuckTickets = await db.query.tickets.findMany({
-        where: eq(tickets.status, "awaiting_actions"),
+        where: eq(tickets.state, "awaiting_actions"),
       });
 
       for (const ticket of stuckTickets) {

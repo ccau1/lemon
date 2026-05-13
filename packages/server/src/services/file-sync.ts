@@ -4,12 +4,14 @@ import type { WorkflowStep } from "@lemon/shared";
 
 export type TaskItem = {
   id: string;
+  title: string;
   description: string;
   done: boolean;
   comment?: string;
-  status?: "queued" | "processing" | "done" | "cancelled" | "error";
+  status?: "pending" | "queued" | "processing" | "done" | "cancelled" | "error";
   errorMessage?: string;
   result?: string;
+  thoughts?: string;
 };
 
 export type ThreadMessage = {
@@ -24,6 +26,7 @@ export type TicketState = {
   errorStep?: string | null;
   errorMessage?: string | null;
   forceStep?: WorkflowStep | null;
+  outdatedSteps?: WorkflowStep[];
 };
 
 export type TicketConf = {
@@ -51,6 +54,24 @@ export function archivedTicketDir(workspacePath: string, ticketId: string): stri
 
 export function isTicketArchived(workspacePath: string, ticketId: string): boolean {
   return fs.existsSync(archivedTicketDir(workspacePath, ticketId));
+}
+
+const contentFiles = ["spec.md", "plan.md", "tasks.json", "implement.md"];
+
+export function hasTicketArtifacts(workspacePath: string, ticketId: string): boolean {
+  const dir = ticketDir(workspacePath, ticketId);
+  if (fs.existsSync(dir)) {
+    for (const f of contentFiles) {
+      if (fs.existsSync(path.join(dir, f))) return true;
+    }
+  }
+  const archived = archivedTicketDir(workspacePath, ticketId);
+  if (fs.existsSync(archived)) {
+    for (const f of contentFiles) {
+      if (fs.existsSync(path.join(archived, f))) return true;
+    }
+  }
+  return false;
 }
 
 export function ensureTicketDir(workspacePath: string, ticketId: string): string {
@@ -106,7 +127,9 @@ export function readTasks(workspacePath: string, ticketId: string): TaskItem[] |
   const raw = readStep(workspacePath, ticketId, "tasks");
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as TaskItem[];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed as TaskItem[];
   } catch {
     return null;
   }
@@ -115,7 +138,11 @@ export function readTasks(workspacePath: string, ticketId: string): TaskItem[] |
 export function writeTasks(workspacePath: string, ticketId: string, tasks: TaskItem[]): void {
   writeStep(workspacePath, ticketId, "tasks", JSON.stringify(tasks, null, 2));
   const dir = ensureTicketDir(workspacePath, ticketId);
-  const markdown = tasks.map((t) => `- [${t.done ? "x" : " "}] ${t.description}`).join("\n");
+  const markdown = tasks.map((t) => {
+    const title = t.title || t.description;
+    const desc = t.description && t.description !== title ? `\n  ${t.description.split("\n").join("\n  ")}` : "";
+    return `- [${t.done ? "x" : " "}] ${title}${desc}`;
+  }).join("\n");
   fs.writeFileSync(path.join(dir, "tasks.md"), markdown, "utf-8");
 }
 
@@ -123,7 +150,15 @@ export function readThread(workspacePath: string, ticketId: string): ThreadMessa
   const filePath = path.join(ticketDir(workspacePath, ticketId), "thread.jsonl");
   if (!fs.existsSync(filePath)) return [];
   const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter((l) => l.trim());
-  return lines.map((line) => JSON.parse(line) as ThreadMessage);
+  const messages: ThreadMessage[] = [];
+  for (const line of lines) {
+    try {
+      messages.push(JSON.parse(line) as ThreadMessage);
+    } catch {
+      // skip corrupted lines
+    }
+  }
+  return messages;
 }
 
 export function appendThreadMessages(
@@ -201,6 +236,37 @@ export function clearDownstreamArtifacts(
   }
 }
 
+export function markDownstreamOutdated(
+  workspacePath: string,
+  ticketId: string,
+  fromStep: WorkflowStep
+): void {
+  const state = readTicketState(workspacePath, ticketId);
+  const stepIdx = steps.indexOf(fromStep);
+  const downstream = steps.slice(stepIdx + 1);
+  const current = new Set(state.outdatedSteps ?? []);
+  for (const s of downstream) current.add(s);
+  console.log(`[markDownstreamOutdated] ticket=${ticketId} from=${fromStep} before=${JSON.stringify(state.outdatedSteps)} after=${JSON.stringify(Array.from(current))}`);
+  writeTicketState(workspacePath, ticketId, { ...state, outdatedSteps: Array.from(current) });
+}
+
+export function clearOutdatedStep(
+  workspacePath: string,
+  ticketId: string,
+  step: WorkflowStep
+): void {
+  const state = readTicketState(workspacePath, ticketId);
+  const updated = (state.outdatedSteps ?? []).filter((s) => s !== step);
+  console.log(`[clearOutdatedStep] ticket=${ticketId} step=${step} before=${JSON.stringify(state.outdatedSteps)} after=${JSON.stringify(updated)}`);
+  writeTicketState(workspacePath, ticketId, { ...state, outdatedSteps: updated });
+}
+
+export function readOutdatedSteps(workspacePath: string, ticketId: string): WorkflowStep[] {
+  const result = readTicketState(workspacePath, ticketId).outdatedSteps ?? [];
+  console.log(`[readOutdatedSteps] ticket=${ticketId} result=${JSON.stringify(result)}`);
+  return result;
+}
+
 export function readTicketState(workspacePath: string, ticketId: string): TicketState {
   const filePath = path.join(ticketDir(workspacePath, ticketId), ".lmstate");
   if (!fs.existsSync(filePath)) return {};
@@ -213,7 +279,10 @@ export function readTicketState(workspacePath: string, ticketId: string): Ticket
 
 export function writeTicketState(workspacePath: string, ticketId: string, state: TicketState): void {
   const dir = ensureTicketDir(workspacePath, ticketId);
-  fs.writeFileSync(path.join(dir, ".lmstate"), JSON.stringify(state, null, 2), "utf-8");
+  const existing = readTicketState(workspacePath, ticketId);
+  const merged = { ...existing, ...state };
+  console.log(`[writeTicketState] ticket=${ticketId} existing=${JSON.stringify(existing)} incoming=${JSON.stringify(state)} merged=${JSON.stringify(merged)}`);
+  fs.writeFileSync(path.join(dir, ".lmstate"), JSON.stringify(merged, null, 2), "utf-8");
 }
 
 export function readTicketConf(workspacePath: string, ticketId: string): TicketConf {

@@ -158,10 +158,11 @@ export async function migrateArtifactsToFiles(
             ticketId,
             active.map((t) => ({
               id: t.id,
+              title: t.description,
               description: t.description,
               done: Boolean(t.done),
               comment: t.comment ?? undefined,
-              status: (t.status as any) ?? "queued",
+              status: (t.status as any) ?? "pending",
               errorMessage: t.error_message ?? undefined,
               result: t.result ?? undefined,
             }))

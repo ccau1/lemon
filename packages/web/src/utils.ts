@@ -1,6 +1,7 @@
 import i18n from './i18n.ts'
 
-export function formatStatus(status: string): string {
+export function formatStatus(status: string, state?: string): string {
+  if (state === 'awaiting_review') return i18n.t('status.awaiting_review')
   return i18n.t('status.' + status)
 }
 
