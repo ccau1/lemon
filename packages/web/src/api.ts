@@ -2,7 +2,7 @@ const API_BASE = (import.meta as any).env?.VITE_API_BASE || "";
 
 async function fetchJson(path: string, init?: RequestInit) {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    ...(init?.body ? { headers: { "Content-Type": "application/json" } } : {}),
     ...init,
   });
   if (!res.ok) {
@@ -23,6 +23,8 @@ export const api = {
     fetchJson("/api/workspaces", { method: "POST", body: JSON.stringify(body) }),
   updateWorkspace: (id: string, body: { name?: string; path?: string }) =>
     fetchJson(`/api/workspaces/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteWorkspace: (id: string) =>
+    fetchJson(`/api/workspaces/${id}`, { method: "DELETE" }),
   cleanupWorkspaceTickets: (workspaceId: string) =>
     fetchJson(`/api/workspaces/${workspaceId}/cleanup-tickets`, { method: "POST", body: JSON.stringify({}) }),
   cleanupAllTickets: () =>

@@ -7,6 +7,7 @@ import {
   RefreshControl,
   Switch,
   AppState,
+  ActivityIndicator,
 } from "react-native";
 import { TouchableOpacity, FlatList } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
@@ -48,6 +49,7 @@ export default function ConnectionsScreen() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [onlineMap, setOnlineMap] = useState<Record<string, boolean>>({});
+  const [checkingMap, setCheckingMap] = useState<Record<string, boolean>>({});
   const [confirmDelete, setConfirmDelete] = useState<Connection | null>(null);
   const { buildClient } = useApiClient();
 
@@ -58,30 +60,33 @@ export default function ConnectionsScreen() {
     const enabled = all.filter((c) => c.enabled !== false);
     if (enabled.length === 0) return;
 
-    await Promise.all(
-      enabled.map(async (conn) => {
-        try {
-          if (conn.status === "removed") {
-            // Don't auto-re-register removed connections
-            return;
-          }
-          const client = buildClient(conn);
-          const device = await client.getDeviceStatus();
-          if (conn.status !== device.status) {
-            await updateConnectionStatus(conn.id, device.status as "pending" | "approved" | "removed");
-          }
-        } catch (e: any) {
-          const msg = e?.message || "";
-          if (msg.includes("not found") || msg.includes("404")) {
-            if (conn.status !== "removed") {
-              await updateConnectionStatus(conn.id, "removed");
-            }
-          }
-          // ignore other network errors during background refresh
+    // Fire device status checks in background so UI isn't blocked by offline connections
+    enabled.forEach(async (conn) => {
+      setCheckingMap((prev) => ({ ...prev, [conn.id]: true }));
+      try {
+        if (conn.status === "removed") {
+          // Don't auto-re-register removed connections
+          return;
         }
-      })
-    );
+        const client = buildClient(conn);
+        const device = await client.getDeviceStatus();
+        if (conn.status !== device.status) {
+          await updateConnectionStatus(conn.id, device.status as "pending" | "approved" | "removed");
+        }
+      } catch {
+        // Don't mark as removed on network/server errors.
+        // Only an explicit device:updated push or a successful getDeviceStatus
+        // response can change status to "removed".
+      } finally {
+        setCheckingMap((prev) => {
+          const next = { ...prev };
+          delete next[conn.id];
+          return next;
+        });
+      }
+    });
 
+    // Refresh list immediately without waiting for slow status checks
     const refreshed = await getConnections();
     setConnections(refreshed);
   }, [buildClient]);
@@ -89,19 +94,31 @@ export default function ConnectionsScreen() {
   const checkOnline = useCallback(async () => {
     const all = await getConnections();
     const enabled = all.filter((c) => c.enabled !== false);
-    const next: Record<string, boolean> = {};
-    await Promise.all(
-      enabled.map(async (conn) => {
-        try {
-          const client = buildClient(conn);
-          await client.healthCheck();
-          next[conn.id] = true;
-        } catch {
-          next[conn.id] = false;
-        }
-      })
-    );
-    setOnlineMap(next);
+    // Update incrementally so fast connections don't wait for slow/offline ones
+    enabled.forEach(async (conn) => {
+      setCheckingMap((prev) => ({ ...prev, [conn.id]: true }));
+      try {
+        const client = buildClient(conn);
+        await client.healthCheck();
+        setOnlineMap((prev) => ({ ...prev, [conn.id]: true }));
+      } catch {
+        setOnlineMap((prev) => ({ ...prev, [conn.id]: false }));
+      } finally {
+        setCheckingMap((prev) => {
+          const next = { ...prev };
+          delete next[conn.id];
+          return next;
+        });
+      }
+    });
+    // Prune stale entries for deleted connections
+    setOnlineMap((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const c of all) {
+        if (c.id in prev) next[c.id] = prev[c.id];
+      }
+      return next;
+    });
   }, [buildClient]);
 
   const wsUnsubscribeRef = useRef<(() => void) | undefined>(undefined);
@@ -210,6 +227,9 @@ export default function ConnectionsScreen() {
                 <View style={styles.nameRow}>
                   <View style={[styles.dot, dotStyle(item)]} />
                   <Text style={styles.name}>{item.name}</Text>
+                  {checkingMap[item.id] && (
+                    <ActivityIndicator size="small" color="#9ca3af" />
+                  )}
                 </View>
                 <Text style={styles.url}>{item.url}</Text>
                 {item.status === "pending" && (

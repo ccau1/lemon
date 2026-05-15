@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
 import { api } from '../api.ts'
-import { useSelectedWorkspace } from '../WorkspaceContext.tsx'
+import { useSelectedWorkspace } from '../contexts/WorkspaceContext.tsx'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import TicketModal from '../components/TicketModal.tsx'
 import { DropdownFilter, DropdownSelect } from '../components/Dropdown.tsx'
@@ -397,192 +397,229 @@ export default function TicketsBoardPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto">
-      <div className="flex items-center gap-3 mb-4">
-        <h1 className="text-2xl font-bold">Tickets</h1>
-        <button
-          onClick={() => setShowModal(true)}
-          className="w-8 h-8 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700"
-          aria-label="Create ticket"
-          title="Create ticket"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-        </button>
-      </div>
+    <>
+      <div className="max-w-7xl mx-auto">
+        <div className="flex items-center gap-3 mb-4">
+          <h1 className="text-2xl font-bold">Tickets</h1>
+          <button
+            onClick={() => setShowModal(true)}
+            className="w-8 h-8 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700"
+            aria-label="Create ticket"
+            title="Create ticket"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+        </div>
 
-      <div className="bg-white p-4 rounded shadow mb-4 flex flex-wrap items-center gap-4">
-        {selectedWorkspaceId === 'all' && (
+        <div className="bg-white p-4 rounded shadow mb-4 flex flex-wrap items-center gap-4">
+          {selectedWorkspaceId === 'all' && (
+            <DropdownFilter
+              label="Workspaces"
+              options={workspaceOptions}
+              selected={selectedWorkspaces}
+              onToggle={toggleWorkspace}
+              onAll={workspaceFilter.all}
+              onNone={workspaceFilter.none}
+            />
+          )}
+          {filterProjectOptions.length > 0 && (
+            <DropdownFilter
+              label="Projects"
+              options={filterProjectOptions}
+              selected={selectedProjects}
+              onToggle={toggleProject}
+              onAll={projectFilter.all}
+              onNone={projectFilter.none}
+            />
+          )}
           <DropdownFilter
-            label="Workspaces"
-            options={workspaceOptions}
-            selected={selectedWorkspaces}
-            onToggle={toggleWorkspace}
-            onAll={workspaceFilter.all}
-            onNone={workspaceFilter.none}
+            label="Steps"
+            options={stepOptions}
+            selected={selectedSteps}
+            onToggle={toggleStep}
+            onAll={stepFilter.all}
+            onNone={stepFilter.none}
           />
-        )}
-        {filterProjectOptions.length > 0 && (
           <DropdownFilter
-            label="Projects"
-            options={filterProjectOptions}
-            selected={selectedProjects}
-            onToggle={toggleProject}
-            onAll={projectFilter.all}
-            onNone={projectFilter.none}
+            label="Status"
+            options={statusOptions}
+            selected={selectedStatuses}
+            onToggle={toggleStatus}
+            onAll={statusFilter.all}
+            onNone={statusFilter.none}
           />
-        )}
-        <DropdownFilter
-          label="Steps"
-          options={stepOptions}
-          selected={selectedSteps}
-          onToggle={toggleStep}
-          onAll={stepFilter.all}
-          onNone={stepFilter.none}
-        />
-        <DropdownFilter
-          label="Status"
-          options={statusOptions}
-          selected={selectedStatuses}
-          onToggle={toggleStatus}
-          onAll={statusFilter.all}
-          onNone={statusFilter.none}
-        />
 
-        <Checkbox
-          checked={showArchived}
-          onChange={setArchivedAndQuery}
-          label="Show archived"
-        />
-
-        <div className="ml-auto flex items-center gap-2">
-          <DropdownSelect
-            options={sortOptions}
-            value={currentSortValue}
-            onChange={handleSortChange}
+          <Checkbox
+            checked={showArchived}
+            onChange={setArchivedAndQuery}
+            label="Archived"
           />
-          <div className="flex items-center bg-gray-100 rounded p-1">
-            {views.map((v) => (
-              <button
-                key={v}
-                onClick={() => setViewAndQuery(v)}
-                className={`px-3 py-1.5 text-sm rounded capitalize ${view === v ? 'bg-white shadow text-indigo-600 font-medium' : 'text-gray-600 hover:text-gray-900'}`}
-              >
-                {v}
-              </button>
-            ))}
+
+          <div className="ml-auto flex items-center gap-2">
+            <DropdownSelect
+              options={sortOptions}
+              value={currentSortValue}
+              onChange={handleSortChange}
+            />
+            <div className="flex items-center bg-gray-100 rounded p-1">
+              {views.map((v) => (
+                <button
+                  key={v}
+                  title={v.charAt(0).toUpperCase() + v.slice(1)}
+                  onClick={() => setViewAndQuery(v)}
+                  className={`p-1.5 rounded ${view === v ? 'bg-white shadow text-indigo-600' : 'text-gray-600 hover:text-gray-900'}`}
+                >
+                  {v === 'board' && (
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="5" height="18" rx="1" />
+                      <rect x="10" y="3" width="5" height="18" rx="1" />
+                      <rect x="17" y="3" width="5" height="18" rx="1" />
+                    </svg>
+                  )}
+                  {v === 'list' && (
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="3" y1="6" x2="21" y2="6" />
+                      <line x1="3" y1="12" x2="21" y2="12" />
+                      <line x1="3" y1="18" x2="21" y2="18" />
+                    </svg>
+                  )}
+                  {v === 'cards' && (
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="7" height="7" rx="1" />
+                      <rect x="14" y="3" width="7" height="7" rx="1" />
+                      <rect x="3" y="14" width="7" height="7" rx="1" />
+                      <rect x="14" y="14" width="7" height="7" rx="1" />
+                    </svg>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
 
       {view === 'board' && (
-        <BoardView tickets={sortedTickets} steps={stepOrder.filter((s) => selectedSteps.has(s))} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
-      )}
-      {view === 'list' && (
-        <ListView tickets={sortedTickets} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
-      )}
-      {view === 'cards' && (
-        <CardsView tickets={sortedTickets} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
+        <div className="overflow-x-auto pb-4 -mx-6">
+          <BoardView tickets={sortedTickets} steps={stepOrder.filter((s) => selectedSteps.has(s))} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
+        </div>
       )}
 
-      {openTicketId && (
-        <TicketModal
-          workspaceId={openTicket?.workspaceId || modalWorkspaceIdRef.current}
-          ticketId={openTicketId}
-          onClose={closeTicketQuery}
-        />
-      )}
+      <div className="max-w-7xl mx-auto">
+        {view === 'list' && (
+          <div className="overflow-x-auto">
+            <ListView tickets={sortedTickets} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
+          </div>
+        )}
+        {view === 'cards' && (
+          <CardsView tickets={sortedTickets} workspaceMap={workspaceMap} onOpenTicket={openTicketQuery} />
+        )}
 
-      {showModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
-          onClick={(e) => { if (e.target === e.currentTarget) setShowModal(false) }}
-        >
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">New Ticket</h2>
-              <button className="text-gray-500 hover:text-gray-800" onClick={() => setShowModal(false)}>Close</button>
-            </div>
-            <div className="space-y-4">
-              {selectedWorkspaceId === 'all' && (
+        {openTicketId && (
+          <TicketModal
+            workspaceId={openTicket?.workspaceId || modalWorkspaceIdRef.current}
+            ticketId={openTicketId}
+            onClose={closeTicketQuery}
+          />
+        )}
+
+        {showModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
+            onClick={(e) => { if (e.target === e.currentTarget) setShowModal(false) }}
+          >
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">New Ticket</h2>
+                <button className="text-gray-500 hover:text-gray-800" onClick={() => setShowModal(false)}>Close</button>
+              </div>
+              <div className="space-y-4">
+                {selectedWorkspaceId === 'all' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Workspace</label>
+                    <DropdownSelect
+                      className="w-full"
+                      options={workspaceOptions}
+                      value={modalWorkspaceId}
+                      onChange={(value) => setModalWorkspaceId(value)}
+                    />
+                  </div>
+                )}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Workspace</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
                   <DropdownSelect
                     className="w-full"
-                    options={workspaceOptions}
-                    value={modalWorkspaceId}
-                    onChange={(value) => setModalWorkspaceId(value)}
+                    options={projectOptions}
+                    value={modalProjectId}
+                    onChange={(value) => setModalProjectId(value)}
                   />
                 </div>
-              )}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
-                <DropdownSelect
-                  className="w-full"
-                  options={projectOptions}
-                  value={modalProjectId}
-                  onChange={(value) => setModalProjectId(value)}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-                <input
-                  className="w-full border border-gray-300 px-3 py-2 rounded bg-white text-gray-900"
-                  placeholder="Ticket title"
-                  value={modalTitle}
-                  onChange={(e) => setModalTitle(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && modalTitle.trim() && modalWorkspaceId && modalProjectId) createTicket.mutate() }}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                <textarea
-                  className="w-full border border-gray-300 px-3 py-2 rounded bg-white text-gray-900"
-                  placeholder="Ticket description"
-                  rows={4}
-                  value={modalDescription}
-                  onChange={(e) => setModalDescription(e.target.value)}
-                />
-              </div>
-              <div className="flex items-center justify-between gap-2 pt-2">
-                <IntegrationImportButtons
-                  onImport={({ title: t, description: d, externalSource, externalSourceId }) => {
-                    setModalTitle(t)
-                    setModalDescription(d)
-                    setModalExternalSource(externalSource)
-                    setModalExternalSourceId(externalSourceId)
-                  }}
-                />
-                <div className="flex items-center gap-2">
-                  <button
-                    className="px-4 py-2 rounded text-sm text-gray-700 hover:bg-gray-100"
-                    onClick={() => setShowModal(false)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="bg-indigo-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
-                    disabled={!modalWorkspaceId || !modalProjectId || !modalTitle.trim() || createTicket.isPending}
-                    onClick={() => createTicket.mutate()}
-                  >
-                    {createTicket.isPending ? 'Creating...' : 'Create'}
-                  </button>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                  <input
+                    className="w-full border border-gray-300 px-3 py-2 rounded bg-white text-gray-900"
+                    placeholder="Ticket title"
+                    value={modalTitle}
+                    onChange={(e) => setModalTitle(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && modalTitle.trim() && modalWorkspaceId && modalProjectId) createTicket.mutate() }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <textarea
+                    className="w-full border border-gray-300 px-3 py-2 rounded bg-white text-gray-900"
+                    placeholder="Ticket description"
+                    rows={4}
+                    value={modalDescription}
+                    onChange={(e) => setModalDescription(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2 pt-2">
+                  <IntegrationImportButtons
+                    onImport={({ title: t, description: d, externalSource, externalSourceId }) => {
+                      setModalTitle(t)
+                      setModalDescription(d)
+                      setModalExternalSource(externalSource)
+                      setModalExternalSourceId(externalSourceId)
+                    }}
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="px-4 py-2 rounded text-sm text-gray-700 hover:bg-gray-100"
+                      onClick={() => setShowModal(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="bg-indigo-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+                      disabled={!modalWorkspaceId || !modalProjectId || !modalTitle.trim() || createTicket.isPending}
+                      onClick={() => createTicket.mutate()}
+                    >
+                      {createTicket.isPending ? 'Creating...' : 'Create'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   )
 }
 
 function BoardView({ tickets, steps, workspaceMap, onOpenTicket }: { tickets: any[]; steps: string[]; workspaceMap: Map<string, string>; onOpenTicket: (id: string) => void }) {
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4">
+    <div
+      className="flex gap-4 w-max"
+      style={{
+        paddingLeft: 'max(1.5rem, calc((100vw - 80rem) / 2))',
+        paddingRight: 'max(1.5rem, calc((100vw - 80rem) / 2))',
+      }}
+    >
       {steps.map((step) => (
-        <div key={step} className="min-w-[260px] w-1/5 bg-gray-100 rounded p-3 flex flex-col max-h-[70vh]">
+        <div key={step} className="min-w-[260px] flex-1 bg-gray-100 rounded p-3 flex flex-col max-h-[70vh]">
           <div className="text-xs font-bold uppercase text-gray-500 mb-2 sticky top-0 bg-gray-100 py-1 capitalize">
             {step}
           </div>
@@ -597,25 +634,92 @@ function BoardView({ tickets, steps, workspaceMap, onOpenTicket }: { tickets: an
   )
 }
 
+const COL_WIDTHS_KEY = 'tickets_list_col_widths'
+const DEFAULT_COL_WIDTHS = [280, 140, 80, 140, 140]
+
 function ListView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; workspaceMap: Map<string, string>; onOpenTicket: (id: string) => void }) {
+  const [colWidths, setColWidths] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(COL_WIDTHS_KEY) || 'null')
+      if (Array.isArray(saved) && saved.length === 5 && saved.every((w: unknown) => typeof w === 'number')) return saved as number[]
+    } catch {}
+    return DEFAULT_COL_WIDTHS
+  })
+
+  const draggingRef = useRef<number | null>(null)
+  const startXRef = useRef(0)
+  const startWidthRef = useRef(0)
+  const currentWidthsRef = useRef(colWidths)
+  currentWidthsRef.current = colWidths
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      if (draggingRef.current === null) return
+      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
+      const delta = clientX - startXRef.current
+      const newWidth = Math.max(60, startWidthRef.current + delta)
+      const next = [...currentWidthsRef.current]
+      next[draggingRef.current] = newWidth
+      currentWidthsRef.current = next
+      setColWidths(next)
+      if ('touches' in e) e.preventDefault()
+    }
+    const onUp = () => {
+      if (draggingRef.current !== null) {
+        localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(currentWidthsRef.current))
+        draggingRef.current = null
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    window.addEventListener('touchmove', onMove, { passive: false })
+    window.addEventListener('touchend', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('touchmove', onMove)
+      window.removeEventListener('touchend', onUp)
+    }
+  }, [])
+
+  const handleResizeStart = (index: number, clientX: number) => {
+    startXRef.current = clientX
+    startWidthRef.current = colWidths[index]
+    draggingRef.current = index
+  }
+
+  const gridStyle: React.CSSProperties = {
+    gridTemplateColumns: colWidths.map((w) => `${w}px`).join(' '),
+    gap: '1rem',
+  }
+
   return (
-    <div className="bg-white rounded shadow overflow-hidden">
-      <div className="grid grid-cols-12 gap-4 px-4 py-2 bg-gray-50 text-xs font-bold uppercase text-gray-500 items-center">
-        <div className="col-span-4">Title</div>
-        <div className="col-span-2">Workspace</div>
-        <div className="col-span-1">Step</div>
-        <div className="col-span-2">Status</div>
-        <div className="col-span-2">Created At</div>
-        <div className="col-span-1"></div>
+    <div className="bg-white rounded shadow overflow-hidden min-w-max">
+      <div className="grid px-4 py-2 bg-gray-50 text-xs font-bold uppercase text-gray-500 items-center select-none" style={gridStyle}>
+        {['Title', 'Workspace', 'Step', 'Status', 'Created At'].map((label, i) => (
+          <div key={i} className="relative pr-2 truncate">
+            {label}
+            {i < 4 && (
+              <div
+                className="absolute right-0 top-1 bottom-1 w-2 cursor-col-resize flex justify-center items-center touch-none"
+                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); handleResizeStart(i, e.clientX) }}
+                onTouchStart={(e) => { e.stopPropagation(); handleResizeStart(i, e.touches[0].clientX) }}
+              >
+                <div className="w-px h-full bg-gray-200 hover:bg-gray-500" />
+              </div>
+            )}
+          </div>
+        ))}
       </div>
       <div className="divide-y">
         {tickets.map((t: any) => (
           <div
             key={t.id}
             onClick={() => onOpenTicket(t.id)}
-            className={`grid grid-cols-12 gap-4 px-4 py-3 items-center cursor-pointer ${t.archivedAt ? 'bg-gray-100 opacity-75' : 'hover:bg-gray-50'}`}
+            className={`grid px-4 py-3 items-center cursor-pointer ${t.archivedAt ? 'bg-gray-100 opacity-75' : 'hover:bg-gray-50'}`}
+            style={gridStyle}
           >
-            <div className="col-span-4 font-medium truncate">
+            <div className="font-medium truncate">
               {t.title}
               {t.externalSource && (
                 <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase tracking-wide">
@@ -624,18 +728,15 @@ function ListView({ tickets, workspaceMap, onOpenTicket }: { tickets: any[]; wor
               )}
               <ErrorIndicator errors={t.errors || []} className="ml-2" />
             </div>
-            <div className="col-span-2 text-sm text-gray-600 truncate">{workspaceMap.get(t.workspaceId) || t.workspaceName || 'Unknown'}</div>
-            <div className="col-span-1 text-sm capitalize">{t.columnStep || t.effectiveStep}</div>
-            <div className="col-span-2">
+            <div className="text-sm text-gray-600 truncate">{workspaceMap.get(t.workspaceId) || t.workspaceName || 'Unknown'}</div>
+            <div className="text-sm capitalize">{t.columnStep || t.effectiveStep}</div>
+            <div>
               <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${statusBadgeClasses(t.status, t.state)}`}>
                 {formatStatus(t.status, t.state)}
               </span>
               {t.archivedAt && <span className="ml-2 text-[10px] text-gray-500 uppercase tracking-wide">Archived</span>}
             </div>
-            <div className="col-span-2 text-sm text-gray-500">{new Date(t.createdAt).toLocaleDateString()}</div>
-            <div className="col-span-1 text-right">
-              <span className="text-indigo-600 text-sm hover:underline">Open</span>
-            </div>
+            <div className="text-sm text-gray-500">{new Date(t.createdAt).toLocaleDateString()}</div>
           </div>
         ))}
       </div>
@@ -708,5 +809,3 @@ function TicketCard({ t, workspaceMap, onClick }: { t: any; workspaceMap: Map<st
     </div>
   )
 }
-
-

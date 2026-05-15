@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { providerIds } from "@lemon/shared";
 import type { ModelRegistry } from "../config/model-registry.js";
 
 const createSchema = z.object({
   name: z.string().min(1),
-  provider: z.enum(["openai", "anthropic", "openai-compatible", "claude-code-cli", "kimi-code-cli", "ollama", "qwen", "gemini"]),
+  provider: z.enum(providerIds),
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
   modelId: z.string().min(1),

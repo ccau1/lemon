@@ -1,5 +1,6 @@
 export * from "./types.js";
 export * from "./schemas.js";
+export * from "./providers/index.js";
 export * from "./integration-types.js";
 export * from "./integration-events.js";
 export * from "./scanActions/index.js";

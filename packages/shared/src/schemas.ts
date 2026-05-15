@@ -84,10 +84,12 @@ export const createTicketSchema = z.object({
   externalSourceId: z.string().optional(),
 });
 
+import { providerIds } from "./providers/index.js";
+
 export const modelConfigSchema = z.object({
   id: z.string(),
   name: z.string(),
-  provider: z.enum(["openai", "anthropic", "openai-compatible", "claude-code-cli", "kimi-code-cli", "ollama", "qwen", "gemini"]),
+  provider: z.enum(providerIds),
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
   modelId: z.string(),

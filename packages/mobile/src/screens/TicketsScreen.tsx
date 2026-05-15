@@ -5,6 +5,7 @@ import {
   StyleSheet,
   RefreshControl,
   Modal,
+  Alert,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
 } from "react-native";
@@ -72,6 +73,7 @@ export default function TicketsScreen() {
   const insets = useSafeAreaInsets();
   const [tickets, setTickets] = useState<EnrichedTicket[]>([]);
   const [workspaces, setWorkspaces] = useState<Map<string, string>>(new Map());
+  const [workspaceConnections, setWorkspaceConnections] = useState<Map<string, string>>(new Map());
   const [projects, setProjects] = useState<Set<string>>(new Set());
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>("all");
   const [selectedProject, setSelectedProject] = useState<string>("all");
@@ -95,13 +97,17 @@ export default function TicketsScreen() {
     );
     const allTickets: EnrichedTicket[] = [];
     const wsMap = new Map<string, string>();
+    const wsConnMap = new Map<string, string>();
     const projSet = new Set<string>();
 
     for (const conn of connections) {
       try {
         const client = buildClient(conn);
         const wss = await client.getWorkspaces();
-        for (const w of wss) wsMap.set(w.id, w.name);
+        for (const w of wss) {
+          wsMap.set(w.id, w.name);
+          wsConnMap.set(w.id, conn.id);
+        }
         const all = await client.getAllTickets();
         for (const t of all) {
           allTickets.push({
@@ -128,6 +134,7 @@ export default function TicketsScreen() {
 
     setTickets(allTickets);
     setWorkspaces(wsMap);
+    setWorkspaceConnections(wsConnMap);
     setProjects(projSet);
   }, [buildClient]);
 
@@ -249,6 +256,25 @@ export default function TicketsScreen() {
 
   const workspaceList = Array.from(workspaces.entries()).map(([id, name]) => ({ id, name }));
 
+  const handleDeleteWorkspace = useCallback(async (workspaceId: string) => {
+    const connections = (await getConnections()).filter(
+      (c) => c.enabled !== false && c.status === "approved"
+    );
+    const connId = workspaceConnections.get(workspaceId);
+    const conn = connections.find((c) => c.id === connId) || connections[0];
+    if (!conn) {
+      Alert.alert("Error", "No connection available.");
+      return;
+    }
+    try {
+      const client = buildClient(conn);
+      await client.deleteWorkspace(workspaceId);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to delete workspace.");
+    }
+  }, [buildClient, load, workspaceConnections]);
+
   return (
     <View style={styles.container}>
       <FlatList
@@ -319,6 +345,7 @@ export default function TicketsScreen() {
           setWorkspaceOpen(false);
           navigation.navigate("CreateWorkspace");
         }}
+        onDeleteWorkspace={handleDeleteWorkspace}
       />
     </View>
   );

@@ -17,6 +17,10 @@
     "./integrations/shortcut": {
       "import": "./dist/integrations/shortcut/index.js",
       "types": "./dist/integrations/shortcut/index.d.ts"
+    },
+    "./providers/cli-handlers": {
+      "import": "./dist/providers/cli-handlers.js",
+      "types": "./dist/providers/cli-handlers.d.ts"
     }
   },
   "scripts": {
@@ -28,6 +32,7 @@
     "zod": "^3.24.3"
   },
   "devDependencies": {
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "@types/node": "^22.14.1"
   }
 }

@@ -14,8 +14,8 @@ import { useWebSocketListener } from './hooks/useWebSocket.ts'
 import { api } from './api.ts'
 import { ThemeLoader } from './components/ThemeLoader.tsx'
 import { Tooltip } from './components/Tooltip.tsx'
-import { useSelectedWorkspace } from './WorkspaceContext.tsx'
-import { useConnected } from './ConnectedContext.tsx'
+import { useSelectedWorkspace } from './contexts/WorkspaceContext.tsx'
+import { useConnected } from './contexts/ConnectedContext.tsx'
 import { DropdownSelect } from './components/Dropdown.tsx'
 
 function ThemeToggle() {

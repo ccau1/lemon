@@ -5,8 +5,8 @@ import { BrowserRouter } from 'react-router-dom'
 import './i18n.ts'
 import './index.css'
 import App from './App.tsx'
-import { WorkspaceProvider } from './WorkspaceContext.tsx'
-import { ConnectedProvider } from './ConnectedContext.tsx'
+import { WorkspaceProvider } from './contexts/WorkspaceContext.tsx'
+import { ConnectedProvider } from './contexts/ConnectedContext.tsx'
 
 const queryClient = new QueryClient()
 

@@ -9,6 +9,7 @@ import {
   ScrollView,
   Animated,
   Dimensions,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -21,6 +22,7 @@ interface Props {
   selected: string;
   onSelect: (id: string) => void;
   onCreateWorkspace?: () => void;
+  onDeleteWorkspace?: (id: string) => void;
 }
 
 export default function WorkspacePickerModal({
@@ -30,6 +32,7 @@ export default function WorkspacePickerModal({
   selected,
   onSelect,
   onCreateWorkspace,
+  onDeleteWorkspace,
 }: Props) {
   const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
 
@@ -68,17 +71,42 @@ export default function WorkspacePickerModal({
               {selected === "all" && <Ionicons name="checkmark" size={18} color="#4f46e5" />}
             </TouchableOpacity>
             {workspaces.map((ws) => (
-              <TouchableOpacity
-                key={ws.id}
-                style={[styles.row, selected === ws.id && styles.rowActive]}
-                onPress={() => {
-                  onSelect(ws.id);
-                  onClose();
-                }}
-              >
-                <Text style={[styles.rowText, selected === ws.id && styles.rowTextActive]}>{ws.name}</Text>
-                {selected === ws.id && <Ionicons name="checkmark" size={18} color="#4f46e5" />}
-              </TouchableOpacity>
+              <View key={ws.id} style={[styles.row, selected === ws.id && styles.rowActive]}>
+                <TouchableOpacity
+                  style={styles.rowContent}
+                  onPress={() => {
+                    onSelect(ws.id);
+                    onClose();
+                  }}
+                >
+                  <Text style={[styles.rowText, selected === ws.id && styles.rowTextActive]}>{ws.name}</Text>
+                  {selected === ws.id && <Ionicons name="checkmark" size={18} color="#4f46e5" />}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    Alert.alert(
+                      "Delete Workspace",
+                      `Delete "${ws.name}"? This removes Lemon's tracking files but leaves the repo's .lemon folder intact.`,
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Delete",
+                          style: "destructive",
+                          onPress: () => {
+                            onDeleteWorkspace?.(ws.id);
+                            if (selected === ws.id) {
+                              onSelect("all");
+                            }
+                          },
+                        },
+                      ]
+                    );
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="trash-outline" size={18} color="#9ca3af" />
+                </TouchableOpacity>
+              </View>
             ))}
             <TouchableOpacity
               style={styles.createRow}
@@ -134,6 +162,12 @@ const styles = StyleSheet.create({
     borderBottomColor: "#f3f4f6",
   },
   rowActive: {},
+  rowContent: {
+    flex: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   rowText: { fontSize: 15, color: "#374151" },
   rowTextActive: { color: "#4f46e5", fontWeight: "600" },
   createRow: {

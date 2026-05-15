@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import OpenAI from "openai";
 import type { ModelConfig, WorkflowStep } from "@lemon/shared";
+import { isCliProvider } from "@lemon/shared";
+import { getCliHandler } from "@lemon/shared/providers/cli-handlers";
 import { ModelRegistry } from "../config/model-registry.js";
 import { ConfigManager } from "../config/settings.js";
 
@@ -49,26 +51,6 @@ export class LlmService {
     return this.clients.get(key)!;
   }
 
-  private isCliProvider(config: ModelConfig): boolean {
-    return config.provider === "claude-code-cli" || config.provider === "kimi-code-cli";
-  }
-
-  private getCliCommand(config: ModelConfig): [string, string[]] {
-    if (config.provider === "claude-code-cli") {
-      // --dangerously-skip-permissions: auto-approve all file/shell operations
-      // -p: non-interactive print mode (prompt passed as the following arg)
-      return [config.modelId, ["--dangerously-skip-permissions", "-p"]];
-    }
-    if (config.provider === "kimi-code-cli") {
-      // --quiet: non-interactive mode that prints only the final assistant text
-      //          (equivalent to --print --output-format text --final-message-only)
-      // --yolo: explicit auto-approval (safeguards against config overriding the CLI flag)
-      // --prompt: pass prompt text explicitly so it never gets parsed as a flag
-      return [config.modelId, ["--quiet", "--yolo", "--prompt"]];
-    }
-    throw new Error(`Unknown CLI provider: ${config.provider}`);
-  }
-
   private formatCliPrompt(
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>
   ): string {
@@ -80,14 +62,29 @@ export class LlmService {
       .join("\n\n");
   }
 
+  private async enrichCliError(
+    config: ModelConfig,
+    stderr: string,
+    stdout: string
+  ): Promise<string> {
+    const handler = await getCliHandler(config.provider);
+    if (!handler?.enrichError) return stderr || stdout;
+    const enriched = handler.enrichError(stderr, stdout);
+    return enriched;
+  }
+
   private async chatCli(
     config: ModelConfig,
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     workspacePath?: string,
     signal?: AbortSignal
   ): Promise<string> {
+    const handler = await getCliHandler(config.provider);
+    if (!handler) {
+      throw new Error(`No CLI handler registered for provider: ${config.provider}`);
+    }
     const prompt = this.formatCliPrompt(messages);
-    const [cmd, baseArgs] = this.getCliCommand(config);
+    const [cmd, baseArgs] = handler.getCommand(config);
     const args = [...baseArgs, prompt];
     const TIMEOUT_MS = 900_000; // 15 minutes
     return new Promise((resolve, reject) => {
@@ -139,7 +136,9 @@ export class LlmService {
         clearTimeout(timeout);
         if (signal) signal.removeEventListener("abort", onAbort);
         if (code !== 0) {
-          reject(new Error(`${config.provider} exited with code ${code}: ${stderr || stdout}`));
+          this.enrichCliError(config, stderr, stdout).then((details) => {
+            reject(new Error(`${config.provider} exited with code ${code}: ${details}`));
+          });
         } else {
           resolve(stdout.trim());
         }
@@ -154,8 +153,12 @@ export class LlmService {
     workspacePath?: string,
     signal?: AbortSignal
   ): Promise<AsyncIterable<string>> {
+    const handler = await getCliHandler(config.provider);
+    if (!handler) {
+      throw new Error(`No CLI handler registered for provider: ${config.provider}`);
+    }
     const prompt = this.formatCliPrompt(messages);
-    const [cmd, baseArgs] = this.getCliCommand(config);
+    const [cmd, baseArgs] = handler.getCommand(config);
     const args = [...baseArgs, prompt];
     const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], cwd: workspacePath });
     let stderr = "";
@@ -184,6 +187,7 @@ export class LlmService {
     });
     child.stdin.end();
 
+    const enrich = this.enrichCliError.bind(this);
     return (async function* () {
       try {
         for await (const chunk of child.stdout) {
@@ -195,7 +199,8 @@ export class LlmService {
       }
       const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
       if (code !== 0) {
-        throw new Error(`${config.provider} exited with code ${code}: ${stderr}`);
+        const details = await enrich(config, stderr, "");
+        throw new Error(`${config.provider} exited with code ${code}: ${details}`);
       }
     })();
   }
@@ -207,7 +212,7 @@ export class LlmService {
     signal?: AbortSignal
   ): Promise<{ content: string; durationMs: number }> {
     const startedAt = Date.now();
-    if (this.isCliProvider(config)) {
+    if (isCliProvider(config.provider)) {
       const content = await this.chatCli(config, messages, workspacePath, signal);
       return { content, durationMs: Date.now() - startedAt };
     }
@@ -231,7 +236,7 @@ export class LlmService {
     workspacePath?: string,
     signal?: AbortSignal
   ): Promise<AsyncIterable<string>> {
-    if (this.isCliProvider(config)) {
+    if (isCliProvider(config.provider)) {
       return this.chatStreamCli(config, messages, workspacePath, signal);
     }
 

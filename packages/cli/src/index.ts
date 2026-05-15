@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { providers } from "@lemon/shared";
 import { ApiClient } from "./api-client.js";
 import { serveCommand } from "./commands/serve.js";
 import {
@@ -235,7 +236,7 @@ modelCmd
 modelCmd
   .command("add <name>")
   .description("Add a model")
-  .requiredOption("--provider <provider>", "Provider (openai, anthropic, openai-compatible, claude-code-cli, kimi-code-cli)")
+  .requiredOption("--provider <provider>", `Provider (${providers.map((p) => p.id).join(", ")})`)
   .requiredOption("--model-id <modelId>", "Model ID")
   .option("--base-url <url>", "Base URL")
   .option("--api-key <key>", "API Key")

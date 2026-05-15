@@ -776,30 +776,40 @@ export default function SettingsPage() {
                 />
               </div>
 
-              <button
-                className="bg-indigo-600 text-white px-4 py-2 rounded"
-                onClick={() => {
-                  const toSave: Record<string, string> = {}
-                  steps.filter((s) => s !== 'done').forEach((step) => {
-                    const val = prompts[step]?.trim()
-                    const def = configDefaults?.prompts?.[step] || ''
-                    if (val && val !== def) {
-                      toSave[step] = val
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 disabled:opacity-50"
+                  disabled={update.isPending}
+                  onClick={() => {
+                    const toSave: Record<string, string> = {}
+                    steps.filter((s) => s !== 'done').forEach((step) => {
+                      const val = prompts[step]?.trim()
+                      const def = configDefaults?.prompts?.[step] || ''
+                      if (val && val !== def) {
+                        toSave[step] = val
+                      }
+                    })
+                    update.mutate({ key: 'prompts', value: toSave })
+                    const record: Record<string, string[]> = {}
+                    for (const key of ['default', ...steps]) {
+                      const arr = globs[key]?.split('\n').map((s) => s.trim()).filter((s) => s.length > 0) || []
+                      if (arr.length > 0) {
+                        record[key] = arr
+                      }
                     }
-                  })
-                  update.mutate({ key: 'prompts', value: toSave })
-                  const record: Record<string, string[]> = {}
-                  for (const key of ['default', ...steps]) {
-                    const arr = globs[key]?.split('\n').map((s) => s.trim()).filter((s) => s.length > 0) || []
-                    if (arr.length > 0) {
-                      record[key] = arr
-                    }
-                  }
-                  update.mutate({ key: 'contextGlobs', value: record })
-                }}
-              >
-                Save Workflow
-              </button>
+                    update.mutate({ key: 'contextGlobs', value: record })
+                  }}
+                >
+                  {update.isPending ? 'Saving...' : 'Save Workflow'}
+                </button>
+                {update.isSuccess && !update.isPending && (
+                  <span className="text-sm text-emerald-600 font-medium">Saved successfully</span>
+                )}
+                {update.isError && !update.isPending && (
+                  <span className="text-sm text-red-600 font-medium">Failed to save</span>
+                )}
+              </div>
 
             </div>
           )}

@@ -1,11 +1,12 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Alert, ScrollView, TouchableOpacity } from "react-native";
+import React, { useCallback, useState } from "react";
+import { View, Text, StyleSheet, Alert, ScrollView } from "react-native";
 import { TextInput, Button } from "@lemon/shared-ui";
-import { getConnections, type Connection } from "../stores/connectionsStore";
+import { type Connection } from "../stores/connectionsStore";
 import { useApiClient } from "../hooks/useApiClient";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../navigation/RootNavigator";
+import { ConnectionSelect } from "../components/ConnectionSelect";
 
 export default function CreateWorkspaceScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -16,12 +17,8 @@ export default function CreateWorkspaceScreen() {
   const [path, setPath] = useState("");
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    getConnections().then((conns) => {
-      const approved = conns.filter((c) => c.enabled !== false && c.status === "approved");
-      setConnections(approved);
-      if (approved.length === 1) setSelectedConnId(approved[0].id);
-    });
+  const handleConnectionsChange = useCallback((conns: Connection[]) => {
+    setConnections(conns);
   }, []);
 
   const handleCreate = async () => {
@@ -50,29 +47,16 @@ export default function CreateWorkspaceScreen() {
   return (
     <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <View style={styles.form}>
+        <ConnectionSelect
+          selected={selectedConnId}
+          onSelect={setSelectedConnId}
+          onConnectionsChange={handleConnectionsChange}
+        />
+
         {connections.length === 0 ? (
           <Text style={styles.empty}>No approved connections available.</Text>
         ) : (
           <>
-            {connections.length > 1 && (
-              <View style={styles.row}>
-                <Text style={styles.label}>Connection</Text>
-                <View style={styles.chips}>
-                  {connections.map((c) => (
-                    <TouchableOpacity
-                      key={c.id}
-                      onPress={() => setSelectedConnId(c.id)}
-                      style={[styles.chip, selectedConnId === c.id && styles.chipActive]}
-                    >
-                      <Text style={[styles.chipText, selectedConnId === c.id && styles.chipTextActive]}>
-                        {c.name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            )}
-
             <Text style={styles.label}>Name</Text>
             <TextInput
               placeholder="Workspace name"
@@ -112,10 +96,4 @@ const styles = StyleSheet.create({
   input: { marginTop: 4 },
   gap: { height: 8 },
   empty: { textAlign: "center", marginTop: 40, color: "#6b7280" },
-  row: { marginBottom: 4 },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 },
-  chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: "#f3f4f6" },
-  chipActive: { backgroundColor: "#4f46e5" },
-  chipText: { fontSize: 13, color: "#374151" },
-  chipTextActive: { color: "#ffffff", fontWeight: "600" },
 });

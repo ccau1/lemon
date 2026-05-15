@@ -72,7 +72,13 @@ export async function workspaceRoutes(
 
   fastify.delete("/workspaces/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
+    const ws = registry.get(id);
+    if (!ws) return reply.status(404).send({ error: "Workspace not found" });
     registry.delete(id);
+    const wsDir = path.join(dataDir, "workspaces", id);
+    if (fs.existsSync(wsDir)) {
+      fs.rmSync(wsDir, { recursive: true, force: true });
+    }
     return { success: true };
   });
 

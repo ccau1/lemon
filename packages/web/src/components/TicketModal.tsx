@@ -22,7 +22,7 @@ export default function TicketModal({ workspaceId, ticketId, onClose }: TicketMo
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
-        <div className="flex-1 overflow-hidden pt-14 pr-16 pb-6 pl-6">
+        <div className="flex-1 overflow-hidden pt-14 pr-6 pb-6 pl-6">
           <TicketContainer workspaceId={workspaceId} ticketId={ticketId} />
         </div>
       </div>

@@ -85,10 +85,12 @@ export interface Implementation {
   updatedAt: string;
 }
 
+import type { ProviderId } from "./providers/index.js";
+
 export interface ModelConfig {
   id: string;
   name: string;
-  provider: "openai" | "anthropic" | "openai-compatible" | "claude-code-cli" | "kimi-code-cli" | "ollama" | "qwen" | "gemini";
+  provider: ProviderId;
   baseUrl?: string;
   apiKey?: string;
   modelId: string;

@@ -24,6 +24,13 @@ export default function WorkspacesPage() {
     },
   })
 
+  const deleteWorkspace = useMutation({
+    mutationFn: api.deleteWorkspace,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+    },
+  })
+
   return (
     <div className="max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-4">
@@ -42,16 +49,36 @@ export default function WorkspacesPage() {
         <ul className="space-y-2">
           {(workspaces || []).map((w: any) => (
             <li key={w.id}>
-              <Link
-                to={`/workspace/${w.id}`}
-                className="bg-white p-4 rounded shadow flex justify-between items-center hover:bg-gray-50"
-              >
-                <div>
+              <div className="bg-white p-4 rounded shadow flex justify-between items-center hover:bg-gray-50 group">
+                <Link
+                  to={`/workspace/${w.id}`}
+                  className="flex-1 min-w-0"
+                >
                   <div className="font-semibold">{w.name}</div>
-                  <div className="text-sm text-gray-500">{w.path}</div>
+                  <div className="text-sm text-gray-500 truncate">{w.path}</div>
+                </Link>
+                <div className="flex items-center gap-2 ml-4">
+                  <Link
+                    to={`/workspace/${w.id}`}
+                    className="text-indigo-600 text-sm"
+                  >
+                    Open →
+                  </Link>
+                  <button
+                    className="text-gray-400 hover:text-red-600 p-1 rounded"
+                    title="Delete workspace"
+                    onClick={() => {
+                      if (window.confirm(`Delete workspace "${w.name}"? This removes Lemon's tracking files but leaves the repo's .lemon folder intact.`)) {
+                        deleteWorkspace.mutate(w.id)
+                      }
+                    }}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
                 </div>
-                <span className="text-indigo-600 text-sm">Open →</span>
-              </Link>
+              </div>
             </li>
           ))}
         </ul>

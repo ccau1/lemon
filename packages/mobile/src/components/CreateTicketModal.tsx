@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -8,8 +8,10 @@ import {
   TouchableOpacity,
 } from "react-native";
 import { TextInput, Button } from "@lemon/shared-ui";
-import { getConnections, type Connection } from "../stores/connectionsStore";
+import { type Connection } from "../stores/connectionsStore";
 import { useApiClient } from "../hooks/useApiClient";
+import { SelectRow } from "./SelectRow";
+import { ConnectionSelect } from "./ConnectionSelect";
 
 export default function CreateTicketModal({ onClose }: { onClose: () => void }) {
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -23,11 +25,8 @@ export default function CreateTicketModal({ onClose }: { onClose: () => void }) 
   const [loading, setLoading] = useState(false);
   const { buildClient } = useApiClient();
 
-  useEffect(() => {
-    getConnections().then((conns) => {
-      setConnections(conns);
-      if (conns.length === 1) setSelectedConnId(conns[0].id);
-    });
+  const handleConnectionsChange = useCallback((conns: Connection[]) => {
+    setConnections(conns);
   }, []);
 
   useEffect(() => {
@@ -75,35 +74,6 @@ export default function CreateTicketModal({ onClose }: { onClose: () => void }) 
     }
   };
 
-  const SelectRow = ({
-    label,
-    options,
-    selected,
-    onSelect,
-  }: {
-    label: string;
-    options: Array<{ id: string; name: string }>;
-    selected: string;
-    onSelect: (id: string) => void;
-  }) => (
-    <View style={styles.selectRow}>
-      <Text style={styles.label}>{label}</Text>
-      <View style={styles.chips}>
-        {options.map((o) => (
-          <TouchableOpacity
-            key={o.id}
-            onPress={() => onSelect(o.id)}
-            style={[styles.chip, selected === o.id && styles.chipActive]}
-          >
-            <Text style={[styles.chipText, selected === o.id && styles.chipTextActive]}>
-              {o.name}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  );
-
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -114,14 +84,11 @@ export default function CreateTicketModal({ onClose }: { onClose: () => void }) 
       </View>
 
       <ScrollView style={styles.form} keyboardShouldPersistTaps="handled">
-        {connections.length > 1 && (
-          <SelectRow
-            label="Connection"
-            options={connections.map((c) => ({ id: c.id, name: c.name }))}
-            selected={selectedConnId}
-            onSelect={setSelectedConnId}
-          />
-        )}
+        <ConnectionSelect
+          selected={selectedConnId}
+          onSelect={setSelectedConnId}
+          onConnectionsChange={handleConnectionsChange}
+        />
 
         <SelectRow
           label="Workspace"
@@ -176,12 +143,6 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 18, fontWeight: "800", color: "#111827" },
   close: { fontSize: 14, color: "#4f46e5", fontWeight: "600" },
   form: { padding: 16 },
-  selectRow: { marginBottom: 12 },
   label: { fontSize: 14, fontWeight: "600", color: "#374151", marginBottom: 6 },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: "#f3f4f6" },
-  chipActive: { backgroundColor: "#4f46e5" },
-  chipText: { fontSize: 13, color: "#374151" },
-  chipTextActive: { color: "#ffffff", fontWeight: "600" },
   input: { marginBottom: 12 },
 });

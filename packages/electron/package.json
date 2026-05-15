@@ -6,7 +6,7 @@
   "main": "./dist/main.js",
   "scripts": {
     "build": "tsc",
-    "dev": "electron --import tsx src/main.ts",
+    "dev": "ELECTRON_RUN_AS_NODE= NODE_OPTIONS='--import tsx' electron src/main.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

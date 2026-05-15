@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { DropdownSelect } from '../components/Dropdown.tsx'
 import ResizablePanels from '../components/ResizablePanels.tsx'
 import RunModal from '../components/RunModal.tsx'
-import { useSelectedWorkspace } from '../WorkspaceContext.tsx'
+import { useSelectedWorkspace } from '../contexts/WorkspaceContext.tsx'
 
 function displayActionName(fullName: string) {
   const idx = fullName.indexOf('/')

@@ -11,8 +11,8 @@ async function fetchJson(baseUrl: string, path: string, init?: RequestInit & { t
   try {
     const res = await fetch(`${baseUrl}${path}`, {
       headers: {
-        "Content-Type": "application/json",
         "x-device-id": deviceId,
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
       },
       signal: controller.signal,
       ...init,
@@ -42,6 +42,8 @@ export function buildApiClient(connection: Connection) {
     getWorkspaces: () => fetchJson(baseUrl, "/workspaces"),
     createWorkspace: (body: { name: string; path: string }) =>
       fetchJson(baseUrl, "/workspaces", { method: "POST", body: JSON.stringify(body) }),
+    deleteWorkspace: (id: string) =>
+      fetchJson(baseUrl, `/workspaces/${id}`, { method: "DELETE" }),
     getProjects: (workspaceId: string) =>
       fetchJson(baseUrl, `/projects?workspaceId=${encodeURIComponent(workspaceId)}`),
 
