@@ -8,7 +8,7 @@ const handlers = new Set<Handler>();
 function getUrl() {
   const isDev = (import.meta as any).env?.DEV;
   return isDev
-    ? "ws://localhost:3000/ws"
+    ? "ws://localhost:3456/ws"
     : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
 }
 

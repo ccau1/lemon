@@ -1,0 +1,188 @@
+name: Release CLI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/cli/**'
+      - 'packages/server/**'
+      - 'packages/shared/**'
+
+concurrency:
+  group: release-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.bump.outputs.new_tag }}
+      version: ${{ steps.bump.outputs.version }}
+      should_release: ${{ steps.bump.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version
+        id: bump
+        run: |
+          latest=$(git tag -l 'cli-*' --sort=-v:refname | head -n 1)
+          if [ -z "$latest" ]; then
+            version="0.1.0"
+            should_release="true"
+          else
+            version=${latest#cli-}
+            commits=$(git log "${latest}..HEAD" --pretty=format:%s)
+            bump=""
+            while IFS= read -r msg; do
+              if echo "$msg" | grep -qE '^[a-z]+(\([^)]+\))?!:' || echo "$msg" | grep -qi 'BREAKING CHANGE'; then
+                bump="major"
+                break
+              elif [ -z "$bump" ] && echo "$msg" | grep -qE '^feat(\([^)]+\))?:'; then
+                bump="minor"
+              elif [ -z "$bump" ] && echo "$msg" | grep -qE '^fix(\([^)]+\))?:'; then
+                bump="patch"
+              fi
+            done <<< "$commits"
+            if [ -z "$bump" ]; then
+              echo "No conventional commits since ${latest}. Skipping release."
+              should_release="false"
+            else
+              major=$(echo "$version" | cut -d. -f1)
+              minor=$(echo "$version" | cut -d. -f2)
+              patch=$(echo "$version" | cut -d. -f3)
+              case $bump in
+                major)
+                  major=$((major + 1))
+                  minor=0
+                  patch=0
+                  ;;
+                minor)
+                  minor=$((minor + 1))
+                  patch=0
+                  ;;
+                patch)
+                  patch=$((patch + 1))
+                  ;;
+              esac
+              version="${major}.${minor}.${patch}"
+              should_release="true"
+            fi
+          fi
+          new_tag="cli-${version}"
+          echo "new_tag=${new_tag}" >> $GITHUB_OUTPUT
+          echo "version=${version}" >> $GITHUB_OUTPUT
+          echo "should_release=${should_release}" >> $GITHUB_OUTPUT
+          echo "Bumping to ${new_tag} (bump: ${bump:-initial})"
+
+
+  build:
+    needs: version
+    if: needs.version.outputs.should_release == 'true'
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            targets: 'node20-macos-x64 node20-macos-arm64'
+          - os: windows-latest
+            targets: 'node20-win-x64'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - run: pnpm install
+
+      - run: pnpm --filter @lemon/cli... run build
+
+      - name: Bundle and archive (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          version="${{ needs.version.outputs.version }}"
+          mkdir -p artifacts
+          for target in ${{ matrix.targets }}; do
+            node packages/cli/scripts/bundle.js --target "$target" --skip-build
+            suffix="${target#node20-}"
+            src="packages/cli/dist/lemon-cli-${suffix}"
+            tar czf "artifacts/lemon-cli-${version}-${suffix}.tar.gz" -C "$(dirname "$src")" "$(basename "$src")"
+          done
+
+      - name: Bundle and archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ needs.version.outputs.version }}"
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $targets = "${{ matrix.targets }}".Split(" ")
+          foreach ($target in $targets) {
+            node packages/cli/scripts/bundle.js --target $target --skip-build
+            $suffix = $target -replace "^node\d+-", ""
+            $src = "packages/cli/dist/lemon-cli-$suffix.exe"
+            Compress-Archive -Path $src -DestinationPath "artifacts/lemon-cli-$version-$suffix.zip"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.os }}
+          path: artifacts/*
+
+  release:
+    needs: [version, build]
+    if: needs.version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag ${{ needs.version.outputs.new_tag }}
+          git push origin ${{ needs.version.outputs.new_tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.new_tag }}
+          name: CLI ${{ needs.version.outputs.version }}
+          body: |
+            ## Install
+
+            **macOS (Apple Silicon)**
+            ```bash
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ needs.version.outputs.new_tag }}/lemon-cli-${{ needs.version.outputs.version }}-macos-arm64.tar.gz
+            tar xzf lemon-cli-${{ needs.version.outputs.version }}-macos-arm64.tar.gz
+            sudo mv lemon-cli-macos-arm64 /usr/local/bin/lemon
+            ```
+
+            **macOS (Intel)**
+            ```bash
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ needs.version.outputs.new_tag }}/lemon-cli-${{ needs.version.outputs.version }}-macos-x64.tar.gz
+            tar xzf lemon-cli-${{ needs.version.outputs.version }}-macos-x64.tar.gz
+            sudo mv lemon-cli-macos-x64 /usr/local/bin/lemon
+            ```
+
+            **Windows**
+            Download `lemon-cli-${{ needs.version.outputs.version }}-win-x64.zip`, extract `lemon-cli-win-x64.exe`, and add it to your PATH.
+          files: artifacts/*

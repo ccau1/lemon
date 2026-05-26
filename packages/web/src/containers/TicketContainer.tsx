@@ -69,6 +69,7 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
   }, [globalConfig, rawConfig, data?.ticket?.autoApprove])
 
   const effectiveStep = (!isLoading && data?.ticket?.effectiveStep) || 'spec'
+  const columnStep = (!isLoading && data?.ticket?.columnStep) || 'spec'
   const paramTab = searchParams.get('tab')
   const activeTab: WorkflowStep | 'workflow' = useMemo(() => {
     if (paramTab && viewTabs.includes(paramTab as any)) {
@@ -345,6 +346,7 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
         implementation={data.implementation}
         activeTab={activeTab}
         effectiveStep={effectiveStep}
+        columnStep={columnStep}
         errorMessage={(!dismissedServerError && data.ticket?.errorMessage) || actionError}
         isRunning={data?.ticket?.state === 'running' || data?.ticket?.state === 'queued'}
         isChatPending={chat.isPending}
@@ -370,7 +372,6 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
         onStartImplement={() => startImplement.mutate()}
         onRetryTask={(taskId) => retryTask.mutate(taskId)}
         onStartTaskEarly={(taskId) => startTaskEarly.mutate(taskId)}
-        startingEarlyTaskId={startTaskEarly.isPending ? (startTaskEarly.variables as string) : undefined}
         actionLinkages={actionLinkages?.linkages || []}
         ticketTriggers={(data?.ticket?.triggers || {}) as Record<string, string[]>}
         triggerActions={{ ...(globalConfig?.actions || {}), ...(rawConfig?.actions || {}) }}

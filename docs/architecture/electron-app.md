@@ -7,7 +7,7 @@
 
 ## Behavior
 
-- On app launch, `startServer()` from `@lemon/server` is invoked directly on port 3000
+- On app launch, `startServer()` from `@lemon/server` is invoked directly on port 3456 (or dynamically resolved port). `startServer()` returns the actual listening port and the main process should use that returned value instead of hardcoding a port.
 - In development, the renderer loads `http://localhost:5173` (web dev server)
 - In production, the renderer loads the built `packages/web/dist/index.html`
 

@@ -1,5 +1,5 @@
 export class ApiClient {
-  constructor(private baseUrl: string) {}
+  constructor(private baseUrl: string = `http://localhost:${process.env.LEMON_PORT || 3456}`) {}
 
   private async fetch(path: string, init?: RequestInit) {
     const res = await fetch(`${this.baseUrl}${path}`, {

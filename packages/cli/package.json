@@ -9,7 +9,16 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bundle:exe": "node scripts/bundle.js"
+  },
+  "pkg": {
+    "scripts": [
+      "dist/bundle.js"
+    ],
+    "assets": [
+      "../../node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+    ]
   },
   "dependencies": {
     "@lemon/server": "workspace:*",
@@ -21,6 +30,8 @@
   "devDependencies": {
     "@types/node": "^22.14.1",
     "@types/qrcode-terminal": "^0.12.2",
+    "@yao-pkg/pkg": "^6.4.0",
+    "esbuild": "^0.25.0",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3"
   }

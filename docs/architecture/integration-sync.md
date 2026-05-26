@@ -65,7 +65,7 @@ A laptop running Lemon does not have a public IP or DNS name. External webhooks 
 
 | Approach | How it works | Best for |
 |----------|--------------|----------|
-| **Manual tunnel** | User runs `ngrok http 3000` and pastes the public URL into the integration settings. | Power users, quick testing |
+| **Manual tunnel** | User runs `ngrok http 3456` and pastes the public URL into the integration settings. | Power users, quick testing |
 | **Automatic tunnel** | Lemon server/CLI spawns an embedded tunnel (e.g. `ngrok` or `localtunnel`) on startup and auto-registers the webhook URL via the external system's API. | Zero-friction local development |
 | **Cloud relay** | A lightweight cloud service queues events; the local Lemon client polls the relay. | Production-grade deployments |
 

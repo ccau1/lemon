@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename)
 
 const isDev = !app.isPackaged
 
-async function createWindow() {
+async function createWindow(resolvedPort: number) {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -29,12 +29,13 @@ async function createWindow() {
 
 app.whenReady().then(async () => {
   const dataDir = resolveDataDir()
-  await startServer({ port: 3000, dataDir })
+  const resolvedPort = await startServer({ dataDir })
+  console.log(`Server listening on port ${resolvedPort}`)
 
-  createWindow()
+  createWindow(resolvedPort)
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(resolvedPort)
   })
 })
 

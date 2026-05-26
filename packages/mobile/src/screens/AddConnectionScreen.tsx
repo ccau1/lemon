@@ -100,7 +100,7 @@ export default function AddConnectionScreen() {
 
         <Text style={styles.label}>URL</Text>
         <TextInput
-          placeholder="http://192.168.1.100:3000"
+          placeholder="http://192.168.1.100:3456"
           value={url}
           onChangeText={setUrl}
           autoCapitalize="none"

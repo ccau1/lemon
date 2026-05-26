@@ -22,6 +22,7 @@ export interface TicketViewProps {
   implementation?: any
   activeTab: WorkflowStep | 'workflow'
   effectiveStep: WorkflowStep
+  columnStep?: string
   errorMessage?: string
   isRunning?: boolean
   isChatPending?: boolean
@@ -61,6 +62,7 @@ export default function TicketView({
   implementation: _implementation,
   activeTab,
   effectiveStep,
+  columnStep,
   errorMessage,
   isRunning: _isRunning,
   isChatPending,
@@ -359,12 +361,14 @@ export default function TicketView({
                 onToggleAutoApprove={(v) => onToggleStepAutoApprove?.('tasks', v)}
                 ticketState={ticket.state}
                 effectiveStep={effectiveStep}
+                columnStep={columnStep}
                 isArchived={isArchived}
                 onApprove={onApprove}
                 onStopImplement={onStopImplement}
                 onStartImplement={onStartImplement}
                 onRetryTask={onRetryTask}
                 onStartTaskEarly={onStartTaskEarly}
+                onRegenerate={onRegenerate}
                 isRunning={_isRunning}
               />
             )}

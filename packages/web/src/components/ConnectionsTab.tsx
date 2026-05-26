@@ -26,9 +26,9 @@ function QrIcon({ className }: { className?: string }) {
 function ConnectionHint({ source, url }: { source: string; url: string }) {
   const port = (() => {
     try {
-      return new URL(url).port || '3000'
+      return new URL(url).port || '3456'
     } catch {
-      return '3000'
+      return '3456'
     }
   })()
 

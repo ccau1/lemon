@@ -480,8 +480,8 @@ export class WorkflowEngine {
         .update(tickets)
         .set({ step: "implement", state: "idle", status: "pending", updatedAt: new Date().toISOString() })
         .where(eq(tickets.id, ticketId));
-      if (ws) writeTicketState(ws.path, ticketId, { errorStep: null, errorMessage: null });
     }
+    if (ws) writeTicketState(ws.path, ticketId, { errorStep: null, errorMessage: null });
     await this.runTicket(workspaceId, ticketId);
   }
 
@@ -505,8 +505,8 @@ export class WorkflowEngine {
         .update(tickets)
         .set({ step: "implement", state: "idle", status: "pending", updatedAt: new Date().toISOString() })
         .where(eq(tickets.id, ticketId));
-      writeTicketState(ws.path, ticketId, { errorStep: null, errorMessage: null });
     }
+    writeTicketState(ws.path, ticketId, { errorStep: null, errorMessage: null });
 
     this.broadcast("task:updated", {
       workspaceId,

@@ -1,6 +1,6 @@
 # WebSocket API
 
-Connect to `ws://localhost:3000/ws`
+Connect to `ws://localhost:3456/ws`
 
 ## Events (Server → Client)
 

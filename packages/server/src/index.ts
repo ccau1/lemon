@@ -35,11 +35,11 @@ import { connectionRoutes } from "./routes/connections.js";
 import { DeviceRegistry } from "./config/device-registry.js";
 
 export interface ServerOptions {
-  port: number;
+  port?: number;
   dataDir: string;
 }
 
-export async function startServer(options: ServerOptions) {
+async function buildAndListenApp(options: ServerOptions, port: number) {
   const app = Fastify({ logger: true });
 
   app.setValidatorCompiler(validatorCompiler);
@@ -125,7 +125,7 @@ export async function startServer(options: ServerOptions) {
   await themeRoutes(app, { dataDir: options.dataDir });
   await docsRoutes(app);
   await integrationRoutes(app, { registry: integrationRegistry });
-  await connectionRoutes(app, { registry: deviceRegistry, port: options.port, configManager, broadcast });
+  await connectionRoutes(app, { registry: deviceRegistry, port, configManager, broadcast });
   await serverInfoRoutes(app);
 
   // Health check endpoint
@@ -164,15 +164,42 @@ export async function startServer(options: ServerOptions) {
     socket.on("error", () => {});
   });
 
-  await app.listen({ port: options.port, host: "0.0.0.0" });
-  app.log.info(`Server listening on http://localhost:${options.port}`);
-  return app;
+  try {
+    await app.listen({ port, host: "0.0.0.0" });
+  } catch (err) {
+    await app.close().catch(() => {});
+    throw err;
+  }
+
+  return port;
+}
+
+async function findAvailablePort(options: ServerOptions, startPort: number, maxAttempts = 100): Promise<number> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const port = startPort + i;
+    try {
+      const resolved = await buildAndListenApp(options, port);
+      console.log(`Server listening on http://localhost:${resolved}`);
+      return resolved;
+    } catch (err: any) {
+      if (err.code === "EADDRINUSE") {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error(`No available port found after ${maxAttempts} attempts starting from ${startPort}`);
+}
+
+export async function startServer(options: ServerOptions): Promise<number> {
+  const startPort = options.port ?? 3456;
+  return findAvailablePort(options, startPort);
 }
 
 export { resolveDataDir } from "./config/datadir.js";
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const port = Number(process.env.PORT || 3000);
+  const port = process.env.PORT ? Number(process.env.PORT) : process.env.LEMON_PORT ? Number(process.env.LEMON_PORT) : undefined;
   const dataDir = resolveDataDir(process.env.DATA_DIR);
   startServer({ port, dataDir });
 }

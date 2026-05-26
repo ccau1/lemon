@@ -9,7 +9,7 @@ The `@lemon/cli` package is a thin Node.js client over the `@lemon/server` REST 
 `src/index.ts` bootstraps the CLI, wires subcommands, and resolves a default workspace from `~/.lemon/.default_workspace`.
 
 ```ts
-const client = new ApiClient(`http://localhost:${process.env.LEMON_PORT || 3000}`);
+const client = new ApiClient(`http://localhost:${process.env.LEMON_PORT || 3456}`);
 ```
 
 ## ApiClient
@@ -22,10 +22,10 @@ const client = new ApiClient(`http://localhost:${process.env.LEMON_PORT || 3000}
 Starts the Lemon server inline.
 
 ```bash
-lemon serve -p 3000 -d ~/.lemon
+lemon serve -p 3456 -d ~/.lemon
 ```
 
-Environment variables: `PORT`, `DATA_DIR`.
+Environment variables: `PORT`, `DATA_DIR`, `LEMON_PORT`.
 
 ### `workspace`
 Manage workspace registry.
