@@ -10,6 +10,9 @@ on:
       - 'packages/shared/**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: release-cli-${{ github.ref }}
   cancel-in-progress: false
