@@ -17,6 +17,7 @@ import { Tooltip } from './components/Tooltip.tsx'
 import { useSelectedWorkspace } from './contexts/WorkspaceContext.tsx'
 import { useConnected } from './contexts/ConnectedContext.tsx'
 import { DropdownSelect } from './components/Dropdown.tsx'
+import VersionCheckBanner from './components/VersionCheckBanner.tsx'
 
 function ThemeToggle() {
   const queryClient = useQueryClient()
@@ -472,6 +473,7 @@ function App() {
           </>
         )}
 
+        <VersionCheckBanner />
         <main className="flex-1 p-6">
           <Routes>
             <Route path="/" element={<Navigate to="/tickets" replace />} />

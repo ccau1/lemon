@@ -1,7 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { startServer, resolveDataDir } from '@lemon/server'
+import { checkVersions, getInstallGuide, isServerRunning } from './version-check.js'
+
+app.name = 'Lemon'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -12,10 +15,12 @@ async function createWindow(resolvedPort: number) {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
+    title: 'Lemon',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
     },
   })
 
@@ -23,14 +28,22 @@ async function createWindow(resolvedPort: number) {
     win.loadURL('http://localhost:5173')
     win.webContents.openDevTools()
   } else {
-    win.loadFile(path.join(__dirname, '../../web/dist/index.html'))
+    win.loadFile(path.join(__dirname, '../node_modules/@lemon/web/dist/index.html'))
   }
 }
 
 app.whenReady().then(async () => {
-  const dataDir = resolveDataDir()
-  const resolvedPort = await startServer({ dataDir })
-  console.log(`Server listening on port ${resolvedPort}`)
+  let resolvedPort: number
+
+  const existingServer = await isServerRunning()
+  if (existingServer) {
+    resolvedPort = 3456
+    console.log('Existing server detected on port 3456')
+  } else {
+    const dataDir = resolveDataDir()
+    resolvedPort = await startServer({ dataDir })
+    console.log(`Server listening on port ${resolvedPort}`)
+  }
 
   createWindow(resolvedPort)
 
@@ -50,4 +63,12 @@ ipcMain.handle('select-folder', async () => {
 
 ipcMain.on('notify', (_event, title: string, body: string) => {
   new Notification({ title, body }).show()
+})
+
+ipcMain.handle('check-versions', async () => {
+  return checkVersions()
+})
+
+ipcMain.handle('get-install-guide', async () => {
+  return getInstallGuide(process.platform)
 })

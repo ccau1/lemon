@@ -30,6 +30,15 @@ import {
 import { modelList, modelAdd, modelDefault, modelDefaultAll } from "./commands/model.js";
 import { configGet, configSet } from "./commands/config.js";
 import { connectionQr } from "./commands/connection.js";
+import {
+  serviceInstall,
+  serviceUninstall,
+  serviceStart,
+  serviceStop,
+  serviceStatus,
+  serviceRestart,
+  serviceLogs,
+} from "./commands/service.js";
 
 const program = new Command();
 program.name("lemon").description("AI SDD Workflow CLI").version("0.1.0");
@@ -298,5 +307,43 @@ connectionCmd
   .command("qr")
   .description("Display QR code for mobile connection")
   .action(async () => connectionQr(getClient()));
+
+// service
+const serviceCmd = program.command("service").description("Manage the Lemon server background service");
+
+serviceCmd
+  .command("install")
+  .description("Install the server as a background service")
+  .action(serviceInstall);
+
+serviceCmd
+  .command("uninstall")
+  .description("Remove the background service")
+  .action(serviceUninstall);
+
+serviceCmd
+  .command("start")
+  .description("Start the background service")
+  .action(serviceStart);
+
+serviceCmd
+  .command("stop")
+  .description("Stop the background service")
+  .action(serviceStop);
+
+serviceCmd
+  .command("status")
+  .description("Check the background service status")
+  .action(serviceStatus);
+
+serviceCmd
+  .command("restart")
+  .description("Restart the background service")
+  .action(serviceRestart);
+
+serviceCmd
+  .command("logs")
+  .description("Show service logs")
+  .action(serviceLogs);
 
 program.parse();
