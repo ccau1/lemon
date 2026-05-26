@@ -4,10 +4,12 @@ on:
   push:
     branches: [main]
     paths:
+      - '.github/workflows/release-desktop.yml'
       - 'packages/electron/**'
       - 'packages/web/**'
       - 'packages/server/**'
       - 'packages/shared/**'
+  workflow_dispatch:
 
 concurrency:
   group: release-desktop-${{ github.ref }}

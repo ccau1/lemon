@@ -4,9 +4,11 @@ on:
   push:
     branches: [main]
     paths:
+      - '.github/workflows/release-cli.yml'
       - 'packages/cli/**'
       - 'packages/server/**'
       - 'packages/shared/**'
+  workflow_dispatch:
 
 concurrency:
   group: release-cli-${{ github.ref }}
