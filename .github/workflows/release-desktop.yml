@@ -187,3 +187,9 @@ jobs:
             **Windows**
             Download `lemon-desktop-${{ needs.version.outputs.version }}-win-x64.exe` and run the installer.
           files: artifacts/*
+
+      - name: Output release URL
+        run: |
+          url="https://github.com/${{ github.repository }}/releases/tag/${{ needs.version.outputs.new_tag }}"
+          echo "Release URL: $url" >> "$GITHUB_STEP_SUMMARY"
+          echo "$url"

@@ -192,3 +192,9 @@ jobs:
             **Windows**
             Download `lemon-cli-${{ needs.version.outputs.version }}-win-x64.zip`, extract `lemon-cli-win-x64.exe`, and add it to your PATH.
           files: artifacts/*
+
+      - name: Output release URL
+        run: |
+          url="https://github.com/${{ github.repository }}/releases/tag/${{ needs.version.outputs.new_tag }}"
+          echo "Release URL: $url" >> "$GITHUB_STEP_SUMMARY"
+          echo "$url"
