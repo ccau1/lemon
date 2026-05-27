@@ -2,9 +2,13 @@ import { execSync, exec } from 'child_process'
 import { app } from 'electron'
 import * as https from 'https'
 import * as http from 'http'
+import { readFileSync } from 'fs'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
 
 const REPO = 'ccau1/lemon'
 const SERVER_PORT = 3456
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 export interface VersionInfo {
   desktopVersion: string
@@ -96,11 +100,16 @@ export async function isServerRunning(): Promise<boolean> {
   })
 }
 
+function getBundledCliVersion(): string {
+  const pkgPath = join(__dirname, '..', 'package.json')
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+  return pkg.cliVersion || app.getVersion()
+}
+
 export async function getInstallGuide(platform: string): Promise<{ cli: string; desktop: string }> {
-  const latestCli = await getLatestCliVersion()
   const latestDesktop = await getLatestDesktopVersion()
-  const cliV = latestCli || 'latest'
-  const desktopV = latestDesktop || 'latest'
+  const cliV = getBundledCliVersion()
+  const desktopV = latestDesktop || app.getVersion()
 
   if (platform === 'darwin') {
     return {

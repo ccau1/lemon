@@ -1,6 +1,7 @@
 {
   "name": "@lemon/electron",
   "version": "0.1.0",
+  "cliVersion": "0.1.0",
   "private": true,
   "description": "Lemon Desktop",
   "author": "Lemon",

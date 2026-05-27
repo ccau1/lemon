@@ -198,3 +198,63 @@ jobs:
           url="https://github.com/${{ github.repository }}/releases/tag/${{ needs.version.outputs.new_tag }}"
           echo "Release URL: $url" >> "$GITHUB_STEP_SUMMARY"
           echo "$url"
+
+      - name: Create PR to bump electron cliVersion
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          version="${{ needs.version.outputs.version }}"
+          branch="desktop-bump-cli-version-${version}"
+          node -e "
+            const fs = require('fs');
+            const p = 'packages/electron/package.json';
+            const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            pkg.cliVersion = '${version}';
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+          "
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git checkout -b "$branch"
+          git add packages/electron/package.json
+          git diff --cached --quiet || (git commit -m "chore: bump cliVersion to ${version}" && git push origin "$branch")
+          gh pr create \
+            --title "chore: bump cliVersion to ${version}" \
+            --body "Bumps electron \`cliVersion\` to match the latest CLI release [${{ needs.version.outputs.new_tag }}](https://github.com/${{ github.repository }}/releases/tag/${{ needs.version.outputs.new_tag }})." \
+            --base main \
+            --head "$branch" \
+            --label "automated" || true
+
+      - name: Enable auto-merge on cliVersion PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          version="${{ needs.version.outputs.version }}"
+          branch="desktop-bump-cli-version-${version}"
+          pr_number=$(gh pr list --head "$branch" --json number --jq '.[0].number')
+          if [ -n "$pr_number" ]; then
+            gh pr merge "$pr_number" --auto --squash
+          fi
+
+      - name: Update cli-latest release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          version="${{ needs.version.outputs.version }}"
+          mkdir -p latest-artifacts
+          for f in artifacts/*; do
+            name=$(basename "$f")
+            latest_name=$(echo "$name" | sed "s/-${version}-/-latest-/")
+            cp "$f" "latest-artifacts/$latest_name"
+          done
+
+          gh release delete cli-latest --cleanup-tag -y 2>/dev/null || true
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag -f cli-latest
+          git push -f origin cli-latest
+
+          gh release create cli-latest \
+            --title "CLI Latest" \
+            --notes "Latest CLI release. Automatically updated." \
+            latest-artifacts/*
