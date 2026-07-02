@@ -46,6 +46,9 @@ async function main() {
   // Patch constructs that don't survive CJS bundling + pkg
   const bundlePath = path.join(distDir, 'bundle.js');
   let bundleSource = fs.readFileSync(bundlePath, 'utf-8');
+  // Inject version from package.json
+  const pkg = JSON.parse(fs.readFileSync(path.join(cliDir, 'package.json'), 'utf-8'));
+  bundleSource = bundleSource.replace(/globalThis\["__LEMON_CLI_VERSION__"\]/g, `"${pkg.version}"`);
   // Strip shebang copied from entry point
   bundleSource = bundleSource.replace(/^#!.*\n/, '');
   // import.meta.url

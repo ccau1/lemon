@@ -105,6 +105,17 @@ jobs:
 
       - run: corepack enable
 
+      - name: Bump CLI package version
+        run: |
+          version="${{ needs.version.outputs.version }}"
+          node -e "
+            const fs = require('fs');
+            const p = 'packages/cli/package.json';
+            const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            pkg.version = '${version}';
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+          "
+
       - run: pnpm install
 
       - run: pnpm --filter @lemon/cli... run build

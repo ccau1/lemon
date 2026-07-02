@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-console.log("argv:", process.argv);
 import { Command } from "commander";
 import { providers } from "@lemon/shared";
 import { ApiClient } from "./api-client.js";
@@ -41,7 +40,7 @@ import {
 } from "./commands/service.js";
 
 const program = new Command();
-program.name("lemon").description("AI SDD Workflow CLI").version("0.1.0");
+program.name("lemon").description("AI SDD Workflow CLI").version((globalThis as any)["__LEMON_CLI_VERSION__"] || "0.1.0");
 
 function getClient() {
   const port = process.env.LEMON_PORT || 3456;
