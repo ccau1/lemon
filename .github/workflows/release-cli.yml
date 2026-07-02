@@ -33,7 +33,7 @@ jobs:
       - name: Bump version
         id: bump
         run: |
-          latest=$(git tag -l 'cli-*' --sort=-v:refname | head -n 1)
+          latest=$(git tag -l 'cli-[0-9]*' --sort=-v:refname | head -n 1)
           if [ -z "$latest" ]; then
             version="0.1.0"
             should_release="true"
