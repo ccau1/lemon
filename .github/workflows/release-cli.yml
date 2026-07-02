@@ -104,6 +104,7 @@ jobs:
       - run: corepack enable
 
       - name: Bump CLI package version
+        shell: bash
         run: |
           version="${{ needs.version.outputs.version }}"
           node -e "
