@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 300">
+  <g transform="translate(300, 185)">
+    <!-- Semicircle fill -->
+    <path d="M -170 0 A 170 170 0 0 1 170 0 Z" fill="#ffeb50"/>
+
+    <!-- Segment dividers -->
+    <line x1="0" y1="0" x2="0" y2="-170" stroke="#4b4123" stroke-width="10" stroke-linecap="round"/>
+    <line x1="0" y1="0" x2="147" y2="-85" stroke="#4b4123" stroke-width="10" stroke-linecap="round"/>
+    <line x1="0" y1="0" x2="-147" y2="-85" stroke="#4b4123" stroke-width="10" stroke-linecap="round"/>
+    <line x1="0" y1="0" x2="85" y2="-147" stroke="#4b4123" stroke-width="10" stroke-linecap="round"/>
+    <line x1="0" y1="0" x2="-85" y2="-147" stroke="#4b4123" stroke-width="10" stroke-linecap="round"/>
+
+    <!-- Outer rind -->
+    <path d="M -170 0 A 170 170 0 0 1 170 0" fill="none" stroke="#4b4123" stroke-width="16"/>
+  </g>
+
+  <!-- Reflection ellipses -->
+  <ellipse cx="300" cy="225" rx="210" ry="14" fill="#ffeb50" opacity="0.85"/>
+  <ellipse cx="300" cy="248" rx="160" ry="11" fill="#ffe132" opacity="0.9"/>
+  <ellipse cx="300" cy="265" rx="120" ry="8" fill="#ffeb50" opacity="0.7"/>
+</svg>

@@ -1,0 +1,48 @@
+{
+  "name": "@lemon/electron",
+  "version": "0.1.0",
+  "cliVersion": "0.1.0",
+  "private": true,
+  "description": "Lemon Desktop",
+  "author": "Lemon",
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ELECTRON_RUN_AS_NODE= NODE_OPTIONS='--import tsx' electron src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "package": "electron-builder"
+  },
+  "dependencies": {
+    "@lemon/server": "workspace:*",
+    "@lemon/web": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.1",
+    "electron": "^35.2.0",
+    "electron-builder": "^26.0.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3"
+  },
+  "build": {
+    "productName": "Lemon",
+    "appId": "com.lemon.desktop",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**/*"
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "electronVersion": "35.7.5"
+  }
+}

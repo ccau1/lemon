@@ -3,19 +3,21 @@
   "version": "0.1.0",
   "cliVersion": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.33.0",
   "description": "Lemon Desktop",
   "author": "Lemon",
   "type": "module",
-  "main": "./dist/main.js",
+  "main": "./dist/bundle.cjs",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/bundle.js",
     "dev": "ELECTRON_RUN_AS_NODE= NODE_OPTIONS='--import tsx' electron src/main.ts",
     "typecheck": "tsc --noEmit",
     "package": "electron-builder"
   },
   "dependencies": {
     "@lemon/server": "workspace:*",
-    "@lemon/web": "workspace:*"
+    "@lemon/web": "workspace:*",
+    "better-sqlite3": "^12.3.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.1",
@@ -27,6 +29,7 @@
   "build": {
     "productName": "Lemon",
     "appId": "com.lemon.desktop",
+    "electronVersion": "35.7.5",
     "directories": {
       "output": "dist-electron"
     },

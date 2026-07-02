@@ -53,9 +53,13 @@ function execPromise(cmd: string): Promise<{ stdout: string; stderr: string }> {
 
 export async function detectCliVersion(): Promise<string | null> {
   try {
-    const whichCmd = process.platform === 'win32' ? 'where lemon' : 'which lemon'
-    await execPromise(whichCmd)
-    const { stdout } = await execPromise('lemon -V')
+    if (process.platform === 'win32') {
+      await execPromise('where lemon')
+      const { stdout } = await execPromise('lemon -V')
+      return stdout.trim()
+    }
+    const shell = process.env.SHELL || '/bin/zsh'
+    const { stdout } = await execPromise(`${shell} -ilc "lemon -V"`)
     return stdout.trim()
   } catch {
     return null
@@ -67,7 +71,13 @@ export async function getLatestCliVersion(): Promise<string | null> {
     const releases = await getJson<any[]>(
       `https://api.github.com/repos/${REPO}/releases?per_page=20`
     )
-    const cliRelease = releases.find((r) => r.tag_name?.startsWith('cli-'))
+    const cliRelease = releases.find(
+      (r) =>
+        r.tag_name?.startsWith('cli-') &&
+        !r.draft &&
+        !r.prerelease &&
+        /^cli-\d+\.\d+\.\d+$/.test(r.tag_name)
+    )
     return cliRelease ? cliRelease.tag_name.replace('cli-', '') : null
   } catch {
     return null
