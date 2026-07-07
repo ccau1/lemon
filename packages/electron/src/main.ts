@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from 'electr
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { startServer, resolveDataDir } from '@lemon/server'
-import { checkVersions, getInstallGuide, isServerRunning } from './version-check.js'
+import { checkVersions, getInstallGuide, detectServerPort } from './version-check.js'
 
 app.name = 'Lemon'
 
@@ -27,6 +27,7 @@ async function createWindow(resolvedPort: number) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      additionalArguments: [`--lemon-port=${resolvedPort}`],
     },
   })
 
@@ -58,10 +59,10 @@ app.whenReady().then(async () => {
   let resolvedPort: number
 
   try {
-    const existingServer = await isServerRunning()
-    if (existingServer) {
-      resolvedPort = 3456
-      console.log('Existing server detected on port 3456')
+    const existingPort = await detectServerPort()
+    if (existingPort) {
+      resolvedPort = existingPort
+      console.log(`Existing server detected on port ${existingPort}`)
     } else {
       const dataDir = resolveDataDir()
       console.log(`[main] starting server, dataDir=${dataDir}`)

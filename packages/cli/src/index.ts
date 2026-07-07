@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { providers } from "@lemon/shared";
 import { ApiClient } from "./api-client.js";
 import { serveCommand } from "./commands/serve.js";
+import { serverStartCommand, serverPortCommand } from "./commands/server.js";
 import {
   workspaceList,
   workspaceCreate,
@@ -43,8 +44,7 @@ const program = new Command();
 program.name("lemon").description("AI SDD Workflow CLI").version((globalThis as any)["__LEMON_CLI_VERSION__"] || "0.1.0");
 
 function getClient() {
-  const port = process.env.LEMON_PORT || 3456;
-  return new ApiClient(`http://localhost:${port}`);
+  return new ApiClient();
 }
 
 function resolveWorkspaceId(id?: string): string {
@@ -64,6 +64,21 @@ program
   .option("-p, --port <port>", "Port to listen on (default: 3456, or PORT / LEMON_PORT env var)")
   .option("-d, --data-dir <dir>", "Data directory")
   .action(serveCommand);
+
+// server
+const serverCmd = program.command("server").description("Manage the Lemon server");
+
+serverCmd
+  .command("start")
+  .description("Start the Lemon server (picks an available port if the default is in use)")
+  .option("-p, --port <port>", "Port to listen on (default: 3456, or PORT / LEMON_PORT env var)")
+  .option("-d, --data-dir <dir>", "Data directory")
+  .action(serverStartCommand);
+
+serverCmd
+  .command("port")
+  .description("Print the port of the running Lemon server")
+  .action(serverPortCommand);
 
 // workspace
 const workspaceCmd = program

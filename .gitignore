@@ -45,3 +45,5 @@ playwright-report/
 .cache/
 .eslintcache
 .stylelintcache
+
+lemon-cli-*.tar.gz

@@ -53,16 +53,41 @@ function getPlistContent(lemonPath: string): string {
 </plist>`
 }
 
+function getUid(): number {
+  return typeof process.getuid === 'function' ? process.getuid() : 0
+}
+
+function getGuiDomain(): string {
+  return `gui/${getUid()}`
+}
+
+function isRoot(): boolean {
+  return getUid() === 0
+}
+
+function bootout(): void {
+  try {
+    execSync(`launchctl bootout ${getGuiDomain()} "${PLIST_PATH}"`, { stdio: 'pipe' })
+  } catch {
+    // may not be loaded
+  }
+}
+
 export function install(): void {
+  if (isRoot()) {
+    console.error('Do not run service install as root. This is a user LaunchAgent.')
+    process.exit(1)
+  }
   const lemonPath = getLemonPath()
   if (lemonPath === 'lemon') {
     console.error('lemon not found in PATH. Install the CLI first.')
     process.exit(1)
   }
   ensureLogDir()
+  bootout()
   fs.writeFileSync(PLIST_PATH, getPlistContent(lemonPath), 'utf-8')
   try {
-    execSync(`launchctl bootstrap gui/$(id -u) "${PLIST_PATH}"`, { stdio: 'inherit' })
+    execSync(`launchctl bootstrap ${getGuiDomain()} "${PLIST_PATH}"`, { stdio: 'inherit' })
     console.log('Service installed and started.')
   } catch {
     console.log('Service installed. Run `lemon service start` to start it.')
@@ -70,26 +95,31 @@ export function install(): void {
 }
 
 export function uninstall(): void {
+  if (isRoot()) {
+    console.error('Do not run service uninstall as root. This is a user LaunchAgent.')
+    process.exit(1)
+  }
   if (!fs.existsSync(PLIST_PATH)) {
     console.log('Service not installed.')
     return
   }
-  try {
-    execSync(`launchctl bootout gui/$(id -u) "${PLIST_PATH}"`, { stdio: 'inherit' })
-  } catch {
-    // may not be loaded
-  }
+  bootout()
   fs.unlinkSync(PLIST_PATH)
   console.log('Service uninstalled.')
 }
 
 export function start(): void {
+  if (isRoot()) {
+    console.error('Do not run service start as root. This is a user LaunchAgent.')
+    process.exit(1)
+  }
   if (!fs.existsSync(PLIST_PATH)) {
     console.error('Service not installed. Run `lemon service install` first.')
     process.exit(1)
   }
+  bootout()
   try {
-    execSync(`launchctl bootstrap gui/$(id -u) "${PLIST_PATH}"`, { stdio: 'inherit' })
+    execSync(`launchctl bootstrap ${getGuiDomain()} "${PLIST_PATH}"`, { stdio: 'inherit' })
     console.log('Service started.')
   } catch (e: any) {
     console.error('Failed to start service:', e.message)
@@ -98,8 +128,12 @@ export function start(): void {
 }
 
 export function stop(): void {
+  if (isRoot()) {
+    console.error('Do not run service stop as root. This is a user LaunchAgent.')
+    process.exit(1)
+  }
   try {
-    execSync(`launchctl bootout gui/$(id -u) "${PLIST_PATH}"`, { stdio: 'inherit' })
+    execSync(`launchctl bootout ${getGuiDomain()} "${PLIST_PATH}"`, { stdio: 'inherit' })
     console.log('Service stopped.')
   } catch (e: any) {
     console.error('Failed to stop service:', e.message)
@@ -131,11 +165,7 @@ export function status(): void {
 }
 
 export function restart(): void {
-  try {
-    execSync(`launchctl bootout gui/$(id -u) "${PLIST_PATH}"`, { stdio: 'pipe' })
-  } catch {
-    // ignore
-  }
+  bootout()
   start()
 }
 

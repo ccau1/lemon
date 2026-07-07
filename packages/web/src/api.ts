@@ -1,7 +1,18 @@
-const API_BASE = (import.meta as any).env?.VITE_API_BASE || "";
+const isFileProtocol = typeof window !== "undefined" && window.location.protocol === "file:";
+const electronPort = typeof window !== "undefined" ? (window as any).electronAPI?.serverPort : undefined;
+const API_BASE =
+  (import.meta as any).env?.VITE_API_BASE ||
+  (isFileProtocol ? `http://localhost:${electronPort || 3456}` : "");
+
+function resolveApiPath(path: string) {
+  if (isFileProtocol && path.startsWith("/api/")) {
+    return path.replace("/api", "");
+  }
+  return path;
+}
 
 async function fetchJson(path: string, init?: RequestInit) {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${API_BASE}${resolveApiPath(path)}`, {
     ...(init?.body ? { headers: { "Content-Type": "application/json" } } : {}),
     ...init,
   });

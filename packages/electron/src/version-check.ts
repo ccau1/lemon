@@ -2,9 +2,10 @@ import { execSync, exec } from 'child_process'
 import { app } from 'electron'
 import * as https from 'https'
 import * as http from 'http'
-import { readFileSync } from 'fs'
+import { readFileSync, existsSync, readFileSync as readFile } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+import { resolveDataDir } from '@lemon/server'
 
 const REPO = 'ccau1/lemon'
 const SERVER_PORT = 3456
@@ -96,9 +97,9 @@ export async function getLatestDesktopVersion(): Promise<string | null> {
   }
 }
 
-export async function isServerRunning(): Promise<boolean> {
+export async function isServerRunning(port = SERVER_PORT): Promise<boolean> {
   return new Promise((resolve) => {
-    const req = http.get(`http://localhost:${SERVER_PORT}/server-info`, { timeout: 2000 }, (res) => {
+    const req = http.get(`http://localhost:${port}/server-info`, { timeout: 2000 }, (res) => {
       resolve(res.statusCode === 200)
       req.destroy()
     })
@@ -108,6 +109,43 @@ export async function isServerRunning(): Promise<boolean> {
       resolve(false)
     })
   })
+}
+
+async function getServerPortFromCli(): Promise<number | undefined> {
+  try {
+    if (process.platform === 'win32') {
+      await execPromise('where lemon')
+      const { stdout } = await execPromise('lemon server port')
+      const port = Number(stdout.trim())
+      if (Number.isFinite(port) && port > 0) return port
+    } else {
+      const shell = process.env.SHELL || '/bin/zsh'
+      const { stdout } = await execPromise(`${shell} -ilc "lemon server port"`)
+      const port = Number(stdout.trim())
+      if (Number.isFinite(port) && port > 0) return port
+    }
+  } catch {
+    // CLI not installed or server not running
+  }
+  return undefined
+}
+
+async function getServerPortFromFile(): Promise<number | undefined> {
+  try {
+    const dataDir = resolveDataDir()
+    const portFile = join(dataDir, '.port')
+    if (!existsSync(portFile)) return undefined
+    const raw = readFile(portFile, 'utf-8').trim()
+    const port = raw ? Number(raw) : NaN
+    if (Number.isFinite(port) && port > 0 && (await isServerRunning(port))) return port
+  } catch {
+    // ignore
+  }
+  return undefined
+}
+
+export async function detectServerPort(): Promise<number | undefined> {
+  return (await getServerPortFromCli()) ?? (await getServerPortFromFile())
 }
 
 function getBundledCliVersion(): string {

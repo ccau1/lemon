@@ -6,10 +6,15 @@ let ws: WebSocket | null = null;
 const handlers = new Set<Handler>();
 
 function getUrl() {
-  const isDev = (import.meta as any).env?.DEV;
-  return isDev
-    ? "ws://localhost:3456/ws"
-    : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
+  const env = (import.meta as any).env;
+  const electronPort = typeof window !== "undefined" ? (window as any).electronAPI?.serverPort : undefined;
+  if (env?.DEV) {
+    return `ws://localhost:${env?.VITE_SERVER_PORT || 3456}/ws`;
+  }
+  if (electronPort) {
+    return `ws://localhost:${electronPort}/ws`;
+  }
+  return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
 }
 
 function ensureSocket() {

@@ -263,7 +263,7 @@ export default function TicketView({
       )}
 
       {ticket.errors && ticket.errors.length > 0 && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded p-3">
+        <div className="mb-4 bg-red-50 border border-red-200 rounded p-3 max-h-48 overflow-y-auto">
           <div className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-2">Errors</div>
           <ul className="space-y-2">
             {ticket.errors.map((e: any, i: number) => (

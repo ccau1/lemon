@@ -1,5 +1,27 @@
+import fs from "fs";
+import path from "path";
+import { resolveDataDir } from "@lemon/server";
+import { DEFAULT_SERVER_PORT } from "@lemon/shared";
+
+function resolveDefaultBaseUrl(): string {
+  const envPort = process.env.LEMON_PORT || process.env.PORT;
+  if (envPort) return `http://localhost:${envPort}`;
+  try {
+    const dataDir = resolveDataDir(process.env.DATA_DIR);
+    const portFile = path.join(dataDir, ".port");
+    if (fs.existsSync(portFile)) {
+      const raw = fs.readFileSync(portFile, "utf-8").trim();
+      const port = raw ? Number(raw) : NaN;
+      if (Number.isFinite(port) && port > 0) return `http://localhost:${port}`;
+    }
+  } catch {
+    // ignore
+  }
+  return `http://localhost:${DEFAULT_SERVER_PORT}`;
+}
+
 export class ApiClient {
-  constructor(private baseUrl: string = `http://localhost:${process.env.LEMON_PORT || 3456}`) {}
+  constructor(private baseUrl: string = resolveDefaultBaseUrl()) {}
 
   private async fetch(path: string, init?: RequestInit) {
     const res = await fetch(`${this.baseUrl}${path}`, {

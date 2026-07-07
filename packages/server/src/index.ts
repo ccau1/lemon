@@ -16,7 +16,7 @@ import { WorkflowEngine } from "./services/workflow.js";
 import { ActionRunQueue } from "./services/action-run-queue.js";
 import { EventDispatcher } from "./services/event-dispatcher.js";
 import { ActionTriggerService } from "./services/action-trigger.js";
-import type { WorkflowStep } from "@lemon/shared";
+import { DEFAULT_SERVER_PORT, type WorkflowStep } from "@lemon/shared";
 import { migrateArtifactsToFiles } from "./db/migrate-to-files.js";
 
 import { workspaceRoutes } from "./routes/workspaces.js";
@@ -33,6 +33,7 @@ import { integrationRoutes } from "./routes/integrations.js";
 import { serverInfoRoutes } from "./routes/server-info.js";
 import { connectionRoutes } from "./routes/connections.js";
 import { DeviceRegistry } from "./config/device-registry.js";
+import fs from "fs";
 
 export interface ServerOptions {
   port?: number;
@@ -166,6 +167,7 @@ async function buildAndListenApp(options: ServerOptions, port: number) {
 
   try {
     await app.listen({ port, host: "0.0.0.0" });
+    fs.writeFileSync(path.join(options.dataDir, ".port"), String(port), "utf-8");
   } catch (err) {
     await app.close().catch(() => {});
     throw err;
@@ -192,7 +194,7 @@ async function findAvailablePort(options: ServerOptions, startPort: number, maxA
 }
 
 export async function startServer(options: ServerOptions): Promise<number> {
-  const startPort = options.port ?? 3456;
+  const startPort = options.port ?? DEFAULT_SERVER_PORT;
   return findAvailablePort(options, startPort);
 }
 
