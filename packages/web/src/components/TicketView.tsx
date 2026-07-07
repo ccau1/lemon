@@ -1,6 +1,6 @@
 import type { WorkflowStep } from '@lemon/shared'
 import { integrationEvents } from '@lemon/shared'
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { formatStatus } from '../utils.ts'
 import MarkdownSections from './MarkdownSections.tsx'
@@ -119,6 +119,9 @@ export default function TicketView({
   const [savedScrollRatio, setSavedScrollRatio] = useState(0)
   const [expandedComment, setExpandedComment] = useState('')
   const [descriptionModalOpen, setDescriptionModalOpen] = useState(false)
+  const [dismissedErrors, setDismissedErrors] = useState(false)
+  const errorsKey = useMemo(() => (ticket.errors || []).map((e: any) => e.message).join('|'), [ticket.errors])
+  useEffect(() => { setDismissedErrors(false) }, [errorsKey])
   const expandedTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -248,24 +251,33 @@ export default function TicketView({
       </div>
 
       {errorMessage && (
-        <div className="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2 max-h-16 overflow-y-auto flex items-start gap-2">
-          <pre className="whitespace-pre-wrap font-sans flex-1">{errorMessage}</pre>
+        <div className="relative mb-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
           {onDismissError && (
             <button
-              className="text-red-600 hover:text-red-800 font-medium leading-none"
+              className="absolute top-2 right-2 text-red-600 hover:text-red-800 hover:bg-red-100 font-medium text-lg leading-none p-1 rounded z-10"
               onClick={onDismissError}
               aria-label="Dismiss error"
             >
               ×
             </button>
           )}
+          <pre className="whitespace-pre-wrap font-sans max-h-20 overflow-y-auto pr-6">{errorMessage}</pre>
         </div>
       )}
 
-      {ticket.errors && ticket.errors.length > 0 && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded p-3 max-h-48 overflow-y-auto">
-          <div className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-2">Errors</div>
-          <ul className="space-y-2">
+      {ticket.errors && ticket.errors.length > 0 && !dismissedErrors && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded overflow-hidden">
+          <div className="flex items-center justify-between px-3 pt-3 pb-0">
+            <div className="text-xs font-semibold text-red-700 uppercase tracking-wide">Errors</div>
+            <button
+              className="text-red-600 hover:text-red-800 hover:bg-red-100 font-medium text-lg leading-none p-1 -mr-1 -mt-1 rounded"
+              onClick={() => setDismissedErrors(true)}
+              aria-label="Dismiss errors"
+            >
+              ×
+            </button>
+          </div>
+          <ul className="max-h-28 overflow-y-auto p-3 pt-2 space-y-2">
             {ticket.errors.map((e: any, i: number) => (
               <li key={i} className="text-sm text-red-700">
                 <span className="font-medium capitalize">{e.type.replace('_', ' ')}</span>
