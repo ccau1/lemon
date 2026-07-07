@@ -4,6 +4,7 @@ import { api } from '../api.ts'
 import { useSelectedWorkspace } from '../contexts/WorkspaceContext.tsx'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import TicketModal from '../components/TicketModal.tsx'
+import WorkspaceModal from '../components/WorkspaceModal.tsx'
 import { DropdownFilter, DropdownSelect } from '../components/Dropdown.tsx'
 import Checkbox from '../components/common/Checkbox.tsx'
 import { formatStatus } from '../utils.ts'
@@ -233,6 +234,20 @@ export default function TicketsBoardPage() {
   const closeTicketQuery = () => {
     const next = new URLSearchParams(searchParams)
     next.delete('ticket')
+    setSearchParams(next, { replace: true })
+  }
+
+  const openWorkspaceId = searchParams.get('workspace')
+
+  const openWorkspaceQuery = (workspaceId: string) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('workspace', workspaceId)
+    setSearchParams(next, { replace: true })
+  }
+
+  const closeWorkspaceQuery = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('workspace')
     setSearchParams(next, { replace: true })
   }
 
@@ -521,6 +536,14 @@ export default function TicketsBoardPage() {
             workspaceId={openTicket?.workspaceId || modalWorkspaceIdRef.current}
             ticketId={openTicketId}
             onClose={closeTicketQuery}
+            onOpenWorkspace={openWorkspaceQuery}
+          />
+        )}
+
+        {openWorkspaceId && (
+          <WorkspaceModal
+            workspaceId={openWorkspaceId}
+            onClose={closeWorkspaceQuery}
           />
         )}
 

@@ -12,9 +12,10 @@ const viewTabs: Array<WorkflowStep | 'workflow'> = ['spec', 'plan', 'tasks']
 export interface TicketContainerProps {
   workspaceId: string
   ticketId: string
+  onOpenWorkspace?: (workspaceId: string) => void
 }
 
-export default function TicketContainer({ workspaceId, ticketId }: TicketContainerProps) {
+export default function TicketContainer({ workspaceId, ticketId, onOpenWorkspace }: TicketContainerProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const { data, isLoading, refetch } = useQuery({
@@ -379,6 +380,7 @@ export default function TicketContainer({ workspaceId, ticketId }: TicketContain
         workspacePath={workspace?.path}
         workspaceId={workspaceId}
         workspaceName={workspace?.name}
+        onOpenWorkspace={onOpenWorkspace ? () => onOpenWorkspace(workspaceId) : undefined}
       />
       {blockedModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }} onClick={() => setBlockedModal({ open: false, reason: '' })}>

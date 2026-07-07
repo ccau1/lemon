@@ -52,6 +52,7 @@ export interface TicketViewProps {
   workspacePath?: string
   workspaceId?: string
   workspaceName?: string
+  onOpenWorkspace?: () => void
 }
 
 export default function TicketView({
@@ -92,6 +93,7 @@ export default function TicketView({
   workspacePath,
   workspaceId,
   workspaceName,
+  onOpenWorkspace,
 }: TicketViewProps) {
   const isArchived = !!ticket.archivedAt
   const isLocked = ticket.step === 'implement' || ticket.step === 'done'
@@ -228,9 +230,19 @@ export default function TicketView({
           </div>
           {workspaceName && workspaceId && (
             <div className="text-xs mt-1">
-              <Link to={`/workspace/${workspaceId}`} className="text-indigo-600 hover:underline">
-                {workspaceName}
-              </Link>
+              {onOpenWorkspace ? (
+                <button
+                  type="button"
+                  onClick={onOpenWorkspace}
+                  className="text-indigo-600 hover:underline"
+                >
+                  {workspaceName}
+                </button>
+              ) : (
+                <Link to={`/workspace/${workspaceId}`} className="text-indigo-600 hover:underline">
+                  {workspaceName}
+                </Link>
+              )}
               {workspacePath && (
                 <span className="text-gray-400 ml-1" title={workspacePath}>({workspacePath})</span>
               )}

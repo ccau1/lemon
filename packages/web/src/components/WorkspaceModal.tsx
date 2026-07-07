@@ -1,16 +1,15 @@
-import TicketContainer from '../containers/TicketContainer.tsx'
+import WorkspaceView from './WorkspaceView.tsx'
 
-export interface TicketModalProps {
+export interface WorkspaceModalProps {
   workspaceId: string
-  ticketId: string
   onClose: () => void
-  onOpenWorkspace?: (workspaceId: string) => void
 }
 
-export default function TicketModal({ workspaceId, ticketId, onClose, onOpenWorkspace }: TicketModalProps) {
+export default function WorkspaceModal({ workspaceId, onClose }: WorkspaceModalProps) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden relative">
@@ -23,8 +22,8 @@ export default function TicketModal({ workspaceId, ticketId, onClose, onOpenWork
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
-        <div className="flex-1 overflow-hidden pt-14 pr-6 pb-6 pl-6">
-          <TicketContainer workspaceId={workspaceId} ticketId={ticketId} onOpenWorkspace={onOpenWorkspace} />
+        <div className="flex-1 overflow-y-auto pt-14 pr-6 pb-6 pl-6">
+          <WorkspaceView workspaceId={workspaceId} layer="modal" />
         </div>
       </div>
     </div>
