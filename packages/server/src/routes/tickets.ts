@@ -159,18 +159,14 @@ export async function ticketRoutes(
     const { includeArchived } = request.query as { includeArchived?: string };
     const showArchived = includeArchived === "true";
     const allWorkspaces = registry.list();
-    const allTickets: Array<Record<string, unknown>> = [];
-    for (const ws of allWorkspaces) {
+    const perWorkspace = await Promise.all(allWorkspaces.map(async (ws) => {
       const db = getDb(ws.id);
       const rows = await db.select().from(tickets);
       const filtered = showArchived ? rows : rows.filter((t) => !isTicketArchived(ws.path, t.id));
       const projectNames = readProjectNames(dataDir, ws.id);
-      for (const t of filtered) {
-        const enriched = await enrichTicket(db, t, ws.id, ws.name, ws.path, manager, projectNames.get(t.projectId));
-        allTickets.push(enriched);
-      }
-    }
-    return allTickets;
+      return Promise.all(filtered.map((t) => enrichTicket(db, t, ws.id, ws.name, ws.path, manager, projectNames.get(t.projectId))));
+    }));
+    return perWorkspace.flat();
   });
 
   fastify.get("/tickets/:id/lmstate", async (request, reply) => {

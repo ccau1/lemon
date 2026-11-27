@@ -1,2 +1,7 @@
 packages:
   - 'packages/*'
+
+overrides:
+  '@expo/cli': '58.1.22'
+  'expo-modules-autolinking': '58.1.0'
+

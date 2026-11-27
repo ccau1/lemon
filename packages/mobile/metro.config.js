@@ -16,6 +16,7 @@ config.resolver.nodeModulesPaths = [
 ];
 
 config.resolver.unstable_enableSymlinks = true;
+config.resolver.unstable_enablePackageExports = false;
 config.resolver.unstable_conditionNames = ["react-native", "require", "default", "browser"];
 
 config.resolver.sourceExts = ["native.tsx", "native.ts", "native.jsx", "native.js"].concat(
@@ -24,6 +25,26 @@ config.resolver.sourceExts = ["native.tsx", "native.ts", "native.jsx", "native.j
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   const fallback = context.resolveRequest;
+
+  // Force a single React copy: nested react@19.x copies inside web-only deps
+  // (react-dom, react-markdown, use-sync-external-store, ...) break the hooks
+  // dispatcher ("Cannot read property 'useRef' of null").
+  if (
+    moduleName === "react" ||
+    moduleName.startsWith("react/") ||
+    moduleName === "scheduler" ||
+    moduleName.startsWith("scheduler/")
+  ) {
+    return fallback(
+      {
+        ...context,
+        nodeModulesPaths: [path.resolve(__dirname, "../../node_modules")],
+        disableHierarchicalLookup: true,
+      },
+      moduleName,
+      platform
+    );
+  }
 
   // .js -> .tsx/.ts mapping for workspace packages
   const tryResolve = (name) => {

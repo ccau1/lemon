@@ -6,6 +6,7 @@ import {
   RefreshControl,
   Modal,
   Alert,
+  ActivityIndicator,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
 } from "react-native";
@@ -78,6 +79,7 @@ export default function TicketsScreen() {
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>("all");
   const [selectedProject, setSelectedProject] = useState<string>("all");
   const [refreshing, setRefreshing] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -100,35 +102,42 @@ export default function TicketsScreen() {
     const wsConnMap = new Map<string, string>();
     const projSet = new Set<string>();
 
-    for (const conn of connections) {
-      try {
+    const results = await Promise.allSettled(
+      connections.map(async (conn) => {
         const client = buildClient(conn);
         const wss = await client.getWorkspaces();
-        for (const w of wss) {
-          wsMap.set(w.id, w.name);
-          wsConnMap.set(w.id, conn.id);
-        }
         const all = await client.getAllTickets();
-        for (const t of all) {
-          allTickets.push({
-            id: t.id,
-            title: t.title,
-            status: t.status,
-            state: t.state,
-            step: t.step,
-            effectiveStep: t.effectiveStep,
-            workspaceId: t.workspaceId,
-            workspaceName: wsMap.get(t.workspaceId) || t.workspaceId,
-            projectName: t.projectName,
-            connectionId: conn.id,
-            connectionName: conn.name,
-            updatedAt: t.updatedAt,
-            createdAt: t.createdAt || t.updatedAt,
-          });
-          if (t.projectName) projSet.add(t.projectName);
-        }
-      } catch {
-        // skip unreachable connections
+        return { conn, wss, all };
+      })
+    );
+
+    for (const r of results) {
+      if (r.status === "rejected") {
+        console.warn("[tickets] connection fetch failed:", r.reason?.message ?? r.reason);
+        continue;
+      }
+      const { conn, wss, all } = r.value;
+      for (const w of wss) {
+        wsMap.set(w.id, w.name);
+        wsConnMap.set(w.id, conn.id);
+      }
+      for (const t of all) {
+        allTickets.push({
+          id: t.id,
+          title: t.title,
+          status: t.status,
+          state: t.state,
+          step: t.step,
+          effectiveStep: t.effectiveStep,
+          workspaceId: t.workspaceId,
+          workspaceName: wsMap.get(t.workspaceId) || t.workspaceId,
+          projectName: t.projectName,
+          connectionId: conn.id,
+          connectionName: conn.name,
+          updatedAt: t.updatedAt,
+          createdAt: t.createdAt || t.updatedAt,
+        });
+        if (t.projectName) projSet.add(t.projectName);
       }
     }
 
@@ -153,7 +162,7 @@ export default function TicketsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      load();
+      load().finally(() => setInitialLoading(false));
     }, [load])
   );
 
@@ -290,7 +299,11 @@ export default function TicketsScreen() {
         scrollEventThrottle={16}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No tickets found.</Text>
+            {initialLoading ? (
+              <ActivityIndicator color="#6b7280" />
+            ) : (
+              <Text style={styles.emptyText}>No tickets found.</Text>
+            )}
           </View>
         }
         contentContainerStyle={{ paddingTop: insets.bottom + 80, paddingBottom: insets.top }}

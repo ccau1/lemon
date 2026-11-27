@@ -118,7 +118,7 @@ async function buildAndListenApp(options: ServerOptions, port: number) {
   await workspaceRoutes(app, { registry: workspaceRegistry, dataDir: options.dataDir, getDb });
   await projectRoutes(app, { dataDir: options.dataDir, registry: workspaceRegistry });
   await ticketRoutes(app, { getDb, registry: workspaceRegistry, engine: workflowEngine, dispatcher: eventDispatcher, dataDir: options.dataDir, manager: configManager });
-  await modelRoutes(app, { registry: modelRegistry });
+  await modelRoutes(app, { registry: modelRegistry, llm: llmService });
   await configRoutes(app, { manager: configManager });
   await workflowRoutes(app, { getDb, llm: llmService, engine: workflowEngine, configManager, broadcast, workspaceRegistry, dispatcher: eventDispatcher });
   await testRoutes(app);

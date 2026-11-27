@@ -23,6 +23,9 @@
       "better-sqlite3",
       "esbuild",
       "electron"
-    ]
+    ],
+    "patchedDependencies": {
+      "@expo/cli@58.1.22": "patches/@expo__cli@58.1.22.patch"
+    }
   }
 }

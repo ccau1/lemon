@@ -22,14 +22,16 @@ export class LlmService {
     // 1. Check per-project/step override in workspace config
     const overrides = this.configManager.resolve(workspaceId).stepModelOverrides[projectId];
     if (overrides?.[step]) {
-      return this.modelRegistry.get(overrides[step]);
+      const m = this.modelRegistry.get(overrides[step]);
+      if (m) return m;
     }
 
     // 2. Check workspace/default config for step
     const settings = this.configManager.resolve(workspaceId);
     const defaultModelId = settings.defaultModels[step];
     if (defaultModelId) {
-      return this.modelRegistry.get(defaultModelId);
+      const m = this.modelRegistry.get(defaultModelId);
+      if (m) return m;
     }
 
     // 3. Fallback to any registered model
@@ -77,7 +79,8 @@ export class LlmService {
     config: ModelConfig,
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     workspacePath?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs = 900_000 // 15 minutes
   ): Promise<string> {
     const handler = await getCliHandler(config.provider);
     if (!handler) {
@@ -86,7 +89,6 @@ export class LlmService {
     const prompt = this.formatCliPrompt(messages);
     const [cmd, baseArgs] = handler.getCommand(config);
     const args = [...baseArgs, prompt];
-    const TIMEOUT_MS = 900_000; // 15 minutes
     return new Promise((resolve, reject) => {
       const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], cwd: workspacePath });
       let stdout = "";
@@ -97,8 +99,8 @@ export class LlmService {
           child.kill("SIGKILL");
         }, 5000);
         child.once("close", () => clearTimeout(killTimeout));
-        reject(new Error(`${config.provider} timed out after ${TIMEOUT_MS / 1000}s`));
-      }, TIMEOUT_MS);
+        reject(new Error(`${config.provider} timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
       const onAbort = () => {
         clearTimeout(timeout);
         child.kill("SIGTERM");
@@ -203,6 +205,46 @@ export class LlmService {
         throw new Error(`${config.provider} exited with code ${code}: ${details}`);
       }
     })();
+  }
+
+  async testConnection(
+    config: ModelConfig
+  ): Promise<{ success: boolean; durationMs: number; reply?: string; error?: string }> {
+    const startedAt = Date.now();
+    const messages = [{ role: "user" as const, content: 'Reply with exactly: ok' }];
+    try {
+      if (isCliProvider(config.provider)) {
+        const content = await this.chatCli(config, messages, undefined, undefined, 60_000);
+        return { success: true, durationMs: Date.now() - startedAt, reply: content.slice(0, 200) };
+      }
+
+      const client = this.getClient(config);
+      const body: any = {
+        model: config.modelId,
+        messages: messages as any,
+        max_tokens: 5,
+      };
+      let response;
+      try {
+        response = await client.chat.completions.create(body, { timeout: 30_000 });
+      } catch (err: any) {
+        // Some models (e.g. reasoning models) reject max_tokens; retry without it
+        if (err?.status === 400) {
+          delete body.max_tokens;
+          response = await client.chat.completions.create(body, { timeout: 30_000 });
+        } else {
+          throw err;
+        }
+      }
+      const content = response.choices[0]?.message?.content ?? "";
+      return { success: true, durationMs: Date.now() - startedAt, reply: content.slice(0, 200) };
+    } catch (err: any) {
+      return {
+        success: false,
+        durationMs: Date.now() - startedAt,
+        error: err?.message || String(err),
+      };
+    }
   }
 
   async chat(

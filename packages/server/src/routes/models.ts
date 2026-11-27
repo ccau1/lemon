@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { providerIds } from "@lemon/shared";
 import type { ModelRegistry } from "../config/model-registry.js";
+import type { LlmService } from "../services/llm.js";
 
 const createSchema = z.object({
   name: z.string().min(1),
@@ -14,10 +15,17 @@ const createSchema = z.object({
 
 export async function modelRoutes(
   fastify: FastifyInstance,
-  { registry }: { registry: ModelRegistry }
+  { registry, llm }: { registry: ModelRegistry; llm: LlmService }
 ) {
   fastify.get("/models", async () => {
     return registry.list();
+  });
+
+  fastify.post("/models/:id/test", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const m = registry.get(id);
+    if (!m) return reply.status(404).send({ error: "Model not found" });
+    return llm.testConnection(m);
   });
 
   fastify.get("/models/:id", async (request, reply) => {

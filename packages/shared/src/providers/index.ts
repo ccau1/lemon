@@ -21,6 +21,7 @@ export interface ProviderDefinition {
   name: string;
   category: "api" | "cli";
   icon: string;
+  defaultCommand?: string;
 }
 
 export const providers = [

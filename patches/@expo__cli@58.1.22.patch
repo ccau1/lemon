@@ -1,0 +1,16 @@
+diff --git a/LICENSE-third-party b/LICENSE-third-party
+deleted file mode 100644
+index 3fef7e70dd7e720044de98e835e838fd72909012..0000000000000000000000000000000000000000
+diff --git a/build/src/start/server/metro/withMetroMultiPlatform.js b/build/src/start/server/metro/withMetroMultiPlatform.js
+index 201e373e893d6212018a252b9614fb09b92e13bd..bbcf87a15afa0bed8ec097fab2117a5429e89ab0 100644
+--- a/build/src/start/server/metro/withMetroMultiPlatform.js
++++ b/build/src/start/server/metro/withMetroMultiPlatform.js
+@@ -621,8 +621,6 @@ function withExtendedResolver(config, { autolinkingModuleResolverInput, isTsconf
+                         filePath: HMR_CLIENT_PROD_SHIM_ID
+                     };
+                 }
+-                const hmrModule = doReplaceStrict(hmrClientPath, 'expo/src/async-require/hmr.ts');
+-                if (hmrModule) return hmrModule;
+                 if (useExpoUnstableLogBox) {
+                     // TODO(@kitten): This can never resolve with isolated dependencies
+                     const logBoxModule = doReplace(`${hostPackage}/Libraries/LogBox/LogBoxInspectorContainer.js`, '@expo/log-box/swap-rn-logbox.js');

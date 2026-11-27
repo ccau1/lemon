@@ -3,7 +3,11 @@ import { api } from '../api.ts'
 import { useEffect, useState } from 'react'
 import type { ModelConfig } from '@lemon/shared'
 import { providers, isCliProvider } from '@lemon/shared'
-import type { ProviderId } from '@lemon/shared'
+import type { ProviderId, ProviderDefinition } from '@lemon/shared'
+
+function getDefaultCommand(id: string): string | undefined {
+  return (providers.find((p) => p.id === id) as ProviderDefinition | undefined)?.defaultCommand
+}
 import {
   DndContext,
   closestCenter,
@@ -53,14 +57,53 @@ function deriveModelId(name: string, existing: ModelConfig[], editingId?: string
   return `${base}-${i}`
 }
 
+type TestState =
+  | { status: 'loading' }
+  | { status: 'done'; success: boolean; durationMs: number; error?: string }
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      className="text-gray-400 hover:text-gray-600 p-0.5 shrink-0"
+      title={copied ? 'Copied' : 'Copy error'}
+      aria-label="Copy error"
+      onClick={async () => {
+        await navigator.clipboard.writeText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      }}
+    >
+      {copied ? (
+        <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+      ) : (
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M8 7V5a2 2 0 012-2h9a2 2 0 012 2v9a2 2 0 01-2 2h-2M5 7h9a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2z"
+          />
+        </svg>
+      )}
+    </button>
+  )
+}
+
 function SortableModelItem({
   model,
   onEdit,
   onDelete,
+  onTest,
+  testState,
 }: {
   model: ModelConfig
   onEdit: () => void
   onDelete: () => void
+  onTest: () => void
+  testState?: TestState
 }) {
   const {
     attributes,
@@ -117,6 +160,30 @@ function SortableModelItem({
         )}
       </div>
       <div className="flex items-center gap-2">
+        <button
+          className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap"
+          onClick={onTest}
+          disabled={testState?.status === 'loading'}
+        >
+          {testState?.status === 'loading' ? 'Testing…' : 'Test'}
+        </button>
+        {testState?.status === 'done' && (
+          testState.success ? (
+            <span className="text-xs text-emerald-600 font-medium whitespace-nowrap">
+              OK · {(testState.durationMs / 1000).toFixed(1)}s
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 min-w-0 max-w-[14rem]">
+              <span
+                className="text-xs text-red-600 font-medium truncate"
+                title={testState.error}
+              >
+                Failed: {testState.error}
+              </span>
+              {testState.error && <CopyButton text={testState.error} />}
+            </span>
+          )
+        )}
         <button
           className="text-indigo-600 hover:text-indigo-700 p-1"
           onClick={onEdit}
@@ -209,6 +276,7 @@ function ModelWizard({
   const [step, setStep] = useState(isEdit ? 2 : 1)
   const [provider, setProvider] = useState<string>(editingModel?.provider || getDefaultProviderId())
   const [name, setName] = useState(editingModel?.name || '')
+  const [command, setCommand] = useState(editingModel?.modelId || '')
   const [baseUrl, setBaseUrl] = useState(editingModel?.baseUrl || '')
   const [apiKey, setApiKey] = useState(editingModel?.apiKey || '')
   const [temperature, setTemperature] = useState(
@@ -232,7 +300,9 @@ function ModelWizard({
 
   const handleSave = () => {
     if (error || !name.trim()) return
-    const modelId = deriveModelId(name, existingModels, editingModel?.id)
+    const modelId = isCliProvider(provider) && command.trim()
+      ? command.trim()
+      : deriveModelId(name, existingModels, editingModel?.id)
     const body: Record<string, unknown> = {
       name: name.trim(),
       provider,
@@ -268,6 +338,7 @@ function ModelWizard({
                     onClick={() => {
                       setProvider(p.id)
                       setName(generateUniqueName(p.name, existingModels))
+                      setCommand(getDefaultCommand(p.id) ?? '')
                       setStep(2)
                     }}
                     className="flex flex-col items-center justify-center gap-2 px-4 py-6 rounded border border-gray-200 hover:border-indigo-600 hover:bg-indigo-50 transition"
@@ -301,6 +372,22 @@ function ModelWizard({
                 <p className="text-red-500 text-xs mt-1">{error}</p>
               )}
             </div>
+            {isCliProvider(provider) && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Command
+                </label>
+                <input
+                  className="border px-3 py-2 rounded w-full border-gray-300 bg-white text-gray-900 font-mono"
+                  value={command}
+                  onChange={(e) => setCommand(e.target.value)}
+                  placeholder={getDefaultCommand(provider) ?? 'cli-binary'}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  CLI binary to spawn. Must be on the server's PATH.
+                </p>
+              </div>
+            )}
             {!isCliProvider(provider) && (
               <>
                 <div>
@@ -385,6 +472,28 @@ export default function ModelsTab() {
   const [items, setItems] = useState<ModelConfig[]>([])
   const [isWizardOpen, setIsWizardOpen] = useState(false)
   const [editingModel, setEditingModel] = useState<ModelConfig | null>(null)
+  const [testStates, setTestStates] = useState<Record<string, TestState>>({})
+
+  const handleTest = async (id: string) => {
+    setTestStates((s) => ({ ...s, [id]: { status: 'loading' } }))
+    try {
+      const result = await api.testModel(id)
+      setTestStates((s) => ({
+        ...s,
+        [id]: {
+          status: 'done',
+          success: result.success,
+          durationMs: result.durationMs,
+          error: result.error,
+        },
+      }))
+    } catch (err: any) {
+      setTestStates((s) => ({
+        ...s,
+        [id]: { status: 'done', success: false, durationMs: 0, error: err?.message || 'Request failed' },
+      }))
+    }
+  }
 
   useEffect(() => {
     if (models) setItems(models)
@@ -488,6 +597,8 @@ export default function ModelsTab() {
                 onDelete={() => {
                   if (confirm(`Delete model "${m.name}"?`)) remove.mutate(m.id)
                 }}
+                onTest={() => handleTest(m.id)}
+                testState={testStates[m.id]}
               />
             ))}
           </ul>

@@ -195,6 +195,13 @@ export const api = {
     fetchJson(`/api/models/${id}`, { method: "DELETE" }),
   reorderModels: (ids: string[]) =>
     fetchJson("/api/models/reorder", { method: "PATCH", body: JSON.stringify({ ids }) }),
+  testModel: (id: string) =>
+    fetchJson(`/api/models/${id}/test`, { method: "POST", body: JSON.stringify({}) }) as Promise<{
+      success: boolean
+      durationMs: number
+      reply?: string
+      error?: string
+    }>,
 
   getConfig: (workspaceId?: string) => {
     const q = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
